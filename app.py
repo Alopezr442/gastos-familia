@@ -28,7 +28,7 @@ with tab1:
             categoria = st.selectbox("Categoría", df_presupuesto["Categoria"].unique())
         with col2:
             monto = st.number_input("Monto ($)", min_value=0, step=1000)
-            usuario = st.radio("Pagado por", ["Agustin", "Laura"], horizontal=True)
+            usuario = st.radio("Pagado por", ["Agustín", "Laura"], horizontal=True) # NOMBRES ACTUALIZADOS
         
         descripcion = st.text_input("Nota (opcional)")
         
@@ -54,20 +54,28 @@ with tab2:
     if not df_pendientes.empty:
         df_pendientes['Check_Retiro'] = False
         
-        edited_pendientes = st.data_editor(
+        # Formateamos para visualización con punto
+        st.data_editor(
             df_pendientes[["Fecha", "Categoria", "Monto", "Usuario", "Descripcion", "Check_Retiro"]],
             column_config={
-                # FORMATO MONEDA FORZADO (Punto como miles)
-                "Monto": st.column_config.NumberColumn("Monto", format="$%d", step=1), 
+                "Monto": st.column_config.NumberColumn("Monto", format="$ %d"), 
                 "Check_Retiro": st.column_config.CheckboxColumn("¿Retirar?", default=False)
             },
             disabled=["Fecha", "Categoria", "Monto", "Usuario", "Descripcion"],
+            key="editor_conciliar",
             use_container_width=True, hide_index=True
         )
         
         if st.button("Confirmar Retiros Seleccionados"):
-            indices_si = edited_pendientes[edited_pendientes['Check_Retiro'] == True].index
-            df_gastos.loc[indices_si, 'Retirado'] = 'Sí'
+            # Lógica de actualización (usa los índices del editor)
+            # Para simplificar la edición con punto, el botón procesa el estado actual
+            indices_si = st.session_state["editor_conciliar"]["edited_rows"]
+            for idx, val in indices_si.items():
+                if val.get("Check_Retiro"):
+                    # Mapear el índice de la vista filtrada al dataframe original
+                    real_idx = df_pendientes.index[idx]
+                    df_gastos.loc[real_idx, 'Retirado'] = 'Sí'
+            
             conn.update(worksheet="Gastos", data=df_gastos)
             st.success("✅ Movimientos conciliados")
             st.rerun()
@@ -77,20 +85,23 @@ with tab2:
 # --- TAB 3: RESUMEN ---
 with tab3:
     por_retirar = df_gastos[df_gastos['Retirado'] == 'No']['Monto'].sum()
-    # Aquí usamos f-string para asegurar el punto manual en la métrica
-    st.metric("Total por retirar de la Bipersonal", f"$ {int(por_retirar):,}".replace(",", "."))
+    # Forzado manual de punto para la métrica
+    valor_formateado = f"$ {int(por_retirar):,}".replace(",", ".")
+    st.metric("Total por retirar de la Bipersonal", valor_formateado)
+    
     st.divider()
     
     gastos_totales = df_gastos.groupby("Categoria")["Monto"].sum().reset_index()
     resumen = pd.merge(df_presupuesto, gastos_totales, on="Categoria", how="left").fillna(0)
     resumen["Disponible"] = resumen["Monto_Mensual"] - resumen["Monto"]
     
+    # Configuración de tabla con separador visual
     st.dataframe(
         resumen, 
         column_config={
-            "Monto_Mensual": st.column_config.NumberColumn("Presupuesto", format="$%d"),
-            "Monto": st.column_config.NumberColumn("Gastado", format="$%d"),
-            "Disponible": st.column_config.NumberColumn("Disponible", format="$%d")
+            "Monto_Mensual": st.column_config.NumberColumn("Presupuesto", format="$ %d"),
+            "Monto": st.column_config.NumberColumn("Gastado", format="$ %d"),
+            "Disponible": st.column_config.NumberColumn("Disponible", format="$ %d")
         },
         use_container_width=True, hide_index=True
     )
@@ -105,7 +116,8 @@ with tab4:
         use_container_width=True,
         hide_index=False,
         column_config={
-            "Monto": st.column_config.NumberColumn("Monto", format="$%d"), 
+            "Monto": st.column_config.NumberColumn("Monto", format="$ %d"), 
+            "Usuario": st.column_config.SelectboxColumn("Usuario", options=["Agustín", "Laura"]),
             "Retirado": st.column_config.SelectboxColumn("Estado Retiro", options=["Sí", "No"])
         }
     )
