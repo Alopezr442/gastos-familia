@@ -3,7 +3,6 @@ from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime
 
-# Configuración de página e interfaz
 st.set_page_config(page_title="Gastos Familia", layout="wide")
 conn = st.connection("gsheets", type=GSheetsConnection)
 
@@ -13,7 +12,7 @@ def formatear_punto(valor):
     except:
         return "$ 0"
 
-# CARGA INMEDIATA (Sin caché)
+# CARGA INMEDIATA
 df_presupuesto = conn.read(worksheet="Presupuesto", ttl="0")
 df_gastos_raw = conn.read(worksheet="Gastos", ttl="0")
 df_gastos = df_gastos_raw.copy()
@@ -29,16 +28,13 @@ tabs = st.tabs(["🚀 Planificación", "➕ Registrar", "🏦 Conciliar", "📊 
 with tabs[0]:
     st.header(f"📅 Planificación - {datetime.now().strftime('%B %Y')}")
     col_uf = st.number_input("UF del día 1 del mes:", value=39796.31, step=0.1, format="%.2f")
-    
     mes_actual = datetime.now().month
     cuota_actual = 35 + (mes_actual - 3)
     
-    # 1. Cálculos Base
     hipo_total = 20.77 * col_uf
     dede_total = 15.18 * col_uf
     bipers_total = df_presupuesto["Monto_Mensual"].sum()
     
-    # 2. Proporciones
     hipo_a, hipo_l = hipo_total * 0.748, hipo_total * 0.252
     dede_a, dede_l = dede_total * 0.5, dede_total * 0.5
     bipers_a, bipers_l = bipers_total * 0.858, bipers_total * 0.142
@@ -56,8 +52,8 @@ with tabs[0]:
     
     if st.button("🚀 Iniciar Mes: Cargar Deudas en Gastos"):
         deudas = pd.DataFrame([
-            {"Fecha": datetime.now().strftime("%Y-%m-%d"), "Categoria": "Hipotecario", "Monto": hipo_total, "Descripcion": "Dividendo (Cuota Flexible)", "Usuario": "Bipersonal", "Retirado": "No"},
-            {"Fecha": datetime.now().strftime("%Y-%m-%d"), "Categoria": "DEDE", "Monto": dede_total, "Descripcion": f"Cuota {cuota_actual}", "Usuario": "Bipersonal", "Retirado": "No"}
+            {"Fecha": datetime.now().strftime("%Y-%m-%d"), "Categoria": "Hipotecario", "Monto": hipo_total, "Descripcion": "Dividendo (Cuota Flexible)", "Usuario": "Agustín", "Retirado": "No"},
+            {"Fecha": datetime.now().strftime("%Y-%m-%d"), "Categoria": "DEDE", "Monto": dede_total, "Descripcion": f"Cuota {cuota_actual}", "Usuario": "Agustín", "Retirado": "No"}
         ])
         conn.update(worksheet="Gastos", data=pd.concat([df_gastos_raw, deudas], ignore_index=True))
         st.cache_data.clear()
@@ -73,7 +69,7 @@ with tabs[0]:
     st.table(detalle)
     st.info(f"📝 **Mensaje DEDE:** Repertorio 2497 del 2023 OT 786773 deuda Karen Andrea cuota {cuota_actual}")
 
-    with st.expander("🔍 Gestionar Categorías y Montos del Presupuesto"):
+    with st.expander("🔍 Gestionar Categorías"):
         df_pres_edit = st.data_editor(df_presupuesto, column_config={"Monto_Mensual": st.column_config.NumberColumn("Monto ($)", format="$ %d")}, num_rows="dynamic", use_container_width=True, hide_index=True)
         if st.button("Guardar Estructura"):
             conn.update(worksheet="Presupuesto", data=df_pres_edit.dropna(subset=["Categoria"]))
@@ -94,30 +90,60 @@ with tabs[1]:
             st.cache_data.clear()
             st.rerun()
 
-# --- TAB 2: CONCILIAR (Editable para Cuota Flexible) ---
+# --- TAB 2: CONCILIAR (SEPARADO POR PERSONA) ---
 with tabs[2]:
-    st.subheader("Pendientes de retiro")
+    st.subheader("🏦 Conciliación de Retiros")
     df_pend = df_gastos[df_gastos['Retirado'] == 'No'].copy()
+    
     if not df_pend.empty:
-        df_pend["Confirmar"] = False
+        # Sumatorias por persona
+        suma_a = df_pend[df_pend['Usuario'] == 'Agustín']['Monto'].sum()
+        suma_l = df_pend[df_pend['Usuario'] == 'Laura']['Monto'].sum()
+        
+        c_a, c_l = st.columns(2)
+        c_a.metric("Por retirar Agustín", formatear_punto(suma_a))
+        c_l.metric("Por retirar Laura", formatear_punto(suma_l))
+        
+        st.divider()
+        
+        user_filtro = st.radio("Ver gastos de:", ["Ambos", "Agustín", "Laura"], horizontal=True)
+        
+        if user_filtro != "Ambos":
+            df_view = df_pend[df_pend['Usuario'] == user_filtro].copy()
+        else:
+            df_view = df_pend.copy()
+
+        df_view["Confirmar"] = False
+        
+        # Botón para seleccionar todo el usuario filtrado
+        if user_filtro != "Ambos":
+            if st.button(f"Marcar todos de {user_filtro} como retirados"):
+                indices_user = df_pend[df_pend['Usuario'] == user_filtro].index
+                df_gastos.loc[indices_user, 'Retirado'] = 'Sí'
+                conn.update(worksheet="Gastos", data=df_gastos)
+                st.cache_data.clear()
+                st.rerun()
+
         ed_puntos = st.data_editor(
-            df_pend[["Fecha", "Categoria", "Monto", "Descripcion", "Confirmar"]],
+            df_view[["Fecha", "Categoria", "Monto", "Usuario", "Confirmar"]],
             column_config={
                 "Monto": st.column_config.NumberColumn("Monto ($)", format="$ %d"),
                 "Confirmar": st.column_config.CheckboxColumn("¿Retirar?", default=False)
             },
-            disabled=["Fecha", "Categoria", "Descripcion"],
-            use_container_width=True, hide_index=True, key="ed_concilia"
+            disabled=["Fecha", "Categoria", "Usuario"],
+            use_container_width=True, hide_index=True, key="ed_concilia_v2"
         )
-        if st.button("Confirmar y Actualizar Balance"):
+        
+        if st.button("Confirmar selección manual"):
             for i, row in ed_puntos.iterrows():
-                real_idx = df_pend.index[i]
+                real_idx = df_view.index[i]
                 df_gastos.at[real_idx, "Monto"] = row["Monto"]
                 if row["Confirmar"]: df_gastos.at[real_idx, "Retirado"] = "Sí"
             conn.update(worksheet="Gastos", data=df_gastos)
             st.cache_data.clear()
             st.rerun()
-    else: st.info("Sin retiros pendientes.")
+    else:
+        st.info("No hay retiros pendientes.")
 
 # --- TAB 3: BALANCE ---
 with tabs[3]:
