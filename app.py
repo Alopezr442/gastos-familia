@@ -6,6 +6,7 @@ from datetime import datetime
 st.set_page_config(page_title="Gastos Familia", layout="wide")
 conn = st.connection("gsheets", type=GSheetsConnection)
 
+# Función maestra para formato de miles con punto (Texto)
 def formatear_punto(valor):
     return f"$ {int(valor):,}".replace(",", ".")
 
@@ -26,36 +27,31 @@ with tabs[0]:
     with col_uf:
         uf_val = st.number_input("UF del día 1 del mes:", value=39796.31, step=0.1, format="%.2f")
     
-    # Cálculo de cuota DEDE: Marzo 2026 (mes 3) es cuota 35. 
-    # Fórmula: 35 + (mes_actual - 3)
+    # Cálculo de cuota DEDE automática
     mes_actual = datetime.now().month
     cuota_actual = 35 + (mes_actual - 3)
     
-    # 1. Cálculos de Deudas UF
+    # 1. Cálculos de Deudas UF e Hipotecario
     hipo_total = 20.77 * uf_val
     dede_total = 15.18 * uf_val
-    
-    # 2. Cálculo Gastos Bipersonal (del presupuesto)
     bipers_total = df_presupuesto["Monto_Mensual"].sum()
     
-    # 3. Aplicación de Proporciones
-    # Hipotecario (A: 74.8%, L: 25.2%)
+    # 2. Aplicación de Proporciones exactas
     hipo_a, hipo_l = hipo_total * 0.748, hipo_total * 0.252
-    # DEDE (50/50)
     dede_a, dede_l = dede_total * 0.5, dede_total * 0.5
-    # Bipersonal (A: 85.8%, L: 14.2%)
     bipers_a, bipers_l = bipers_total * 0.858, bipers_total * 0.142
     
     total_a = hipo_a + dede_a + bipers_a
     total_l = hipo_l + dede_l + bipers_l
 
-    # Visualización de Resultados
+    # Métricas principales
     c1, c2 = st.columns(2)
     c1.metric("Aporte Agustín", formatear_punto(total_a))
     c2.metric("Aporte Laura", formatear_punto(total_l))
     
     st.divider()
     st.subheader("Detalle de Transferencia")
+    
     detalle = pd.DataFrame({
         "Ítem": ["🏠 Hipotecario (20.77 UF)", "📑 DEDE (15.18 UF)", "🧾 Presupuesto Casa"],
         "Total": [formatear_punto(hipo_total), formatear_punto(dede_total), formatear_punto(bipers_total)],
@@ -63,10 +59,16 @@ with tabs[0]:
         "Laura": [formatear_punto(hipo_l), formatear_punto(dede_l), formatear_punto(bipers_l)]
     })
     st.table(detalle)
+
+    # --- NUEVA SECCIÓN: DESPLEGABLE DE PRESUPUESTO ---
+    with st.expander("🔍 Ver desglose del Presupuesto Casa (Google Sheets)"):
+        df_pres_ver = df_presupuesto.copy()
+        df_pres_ver["Monto_Mensual"] = df_pres_ver["Monto_Mensual"].apply(formatear_punto)
+        st.table(df_pres_ver)
     
     st.info(f"📝 **Mensaje DEDE:**\n\nRepertorio 2497 del 2023 OT 786773 deuda Karen Andrea cuota {cuota_actual}")
 
-# --- TAB 1: REGISTRO ---
+# --- EL RESTO DEL CÓDIGO SE MANTIENE IGUAL PARA REGISTRO, CONCILIACIÓN Y EDICIÓN ---
 with tabs[1]:
     with st.form("f_gasto", clear_on_submit=True):
         f = st.date_input("Fecha")
@@ -79,7 +81,6 @@ with tabs[1]:
             conn.update(worksheet="Gastos", data=pd.concat([df_gastos_raw, n], ignore_index=True))
             st.rerun()
 
-# --- TAB 2: CONCILIAR ---
 with tabs[2]:
     pend = df_gastos[df_gastos['Retirado'] == 'No'].copy()
     if not pend.empty:
@@ -93,15 +94,14 @@ with tabs[2]:
             st.rerun()
     else: st.info("Sin pendientes.")
 
-# --- TAB 3: RESUMEN ---
 with tabs[3]:
     st.metric("Pendiente Bipersonal", formatear_punto(df_gastos[df_gastos['Retirado'] == 'No']['Monto'].sum()))
     res = pd.merge(df_presupuesto, df_gastos.groupby("Categoria")["Monto"].sum().reset_index(), on="Categoria", how="left").fillna(0)
     res["Disponible"] = res["Monto_Mensual"] - res["Monto"]
-    for c in ["Monto_Mensual", "Monto", "Disponible"]: res[c] = res[c].apply(formatear_punto)
-    st.table(res)
+    res_v = res.copy()
+    for c in ["Monto_Mensual", "Monto", "Disponible"]: res_v[c] = res_v[c].apply(formatear_punto)
+    st.table(res_v)
 
-# --- TAB 4: EDITAR ---
 with tabs[4]:
     df_ed = st.data_editor(df_gastos, num_rows="dynamic", use_container_width=True)
     if st.button("Guardar Cambios"):
