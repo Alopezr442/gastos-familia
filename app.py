@@ -1,23 +1,27 @@
 import streamlit as st
-from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 
 st.set_page_config(page_title="Gastos Familia", layout="wide")
 
-conn = st.connection("gsheets", type=GSheetsConnection)
+# Sustituimos el enlace de visualización por el de exportación directa a CSV
+SHEET_ID = "1VufHMJ8RUUih7zNrz9SigztkG7WvtKibG1d29-Nhlw0"
+url_presupuesto = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Presupuesto"
+url_gastos = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Gastos"
+
+st.title("🏠 Control de Gastos Compartidos")
 
 try:
-    df_presupuesto = conn.read(worksheet="Presupuesto")
-    df_gastos = conn.read(worksheet="Gastos")
+    # Lectura directa con Pandas
+    df_presupuesto = pd.read_csv(url_presupuesto)
+    df_gastos = pd.read_csv(url_gastos)
     
-    st.title("🏠 Control de Gastos")
+    st.subheader("Presupuesto Mensual")
+    st.dataframe(df_presupuesto, use_container_width=True)
     
-    if not df_presupuesto.empty:
-        st.subheader("Resumen de Presupuesto")
-        st.write(df_presupuesto)
-    else:
-        st.warning("La pestaña 'Presupuesto' está vacía.")
-        
+    st.subheader("Historial de Gastos")
+    st.dataframe(df_gastos, use_container_width=True)
+
 except Exception as e:
-    st.error(f"Error de conexión: Verifica que las pestañas se llamen 'Presupuesto' y 'Gastos'")
-    st.info("Asegúrate de que el enlace en Secrets termine en /edit")
+    st.error("No se pudo leer el Excel.")
+    st.info("Verifica que en el Excel las pestañas se llamen exactamente: Presupuesto y Gastos")
+    st.write(f"Error técnico: {e}")
