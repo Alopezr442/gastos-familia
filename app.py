@@ -6,12 +6,11 @@ from datetime import datetime
 st.set_page_config(page_title="Gastos Familia", layout="wide")
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# Función maestra para formato de miles con punto (Texto)
 def formatear_punto(valor):
     return f"$ {int(valor):,}".replace(",", ".")
 
 # Carga de datos
-df_presupuesto = conn.read(worksheet="Presupuesto", ttl="5m")
+df_presupuesto = conn.read(worksheet="Presupuesto", ttl="0") # TTL 0 para ver cambios inmediatos
 df_gastos_raw = conn.read(worksheet="Gastos", ttl="0")
 df_gastos = df_gastos_raw.copy()
 
@@ -27,16 +26,15 @@ with tabs[0]:
     with col_uf:
         uf_val = st.number_input("UF del día 1 del mes:", value=39796.31, step=0.1, format="%.2f")
     
-    # Cálculo de cuota DEDE automática
     mes_actual = datetime.now().month
     cuota_actual = 35 + (mes_actual - 3)
     
-    # 1. Cálculos de Deudas UF e Hipotecario
+    # 1. Cálculos Base
     hipo_total = 20.77 * uf_val
     dede_total = 15.18 * uf_val
     bipers_total = df_presupuesto["Monto_Mensual"].sum()
     
-    # 2. Aplicación de Proporciones exactas
+    # 2. Proporciones
     hipo_a, hipo_l = hipo_total * 0.748, hipo_total * 0.252
     dede_a, dede_l = dede_total * 0.5, dede_total * 0.5
     bipers_a, bipers_l = bipers_total * 0.858, bipers_total * 0.142
@@ -44,14 +42,33 @@ with tabs[0]:
     total_a = hipo_a + dede_a + bipers_a
     total_l = hipo_l + dede_l + bipers_l
 
-    # Métricas principales
     c1, c2 = st.columns(2)
     c1.metric("Aporte Agustín", formatear_punto(total_a))
     c2.metric("Aporte Laura", formatear_punto(total_l))
     
     st.divider()
-    st.subheader("Detalle de Transferencia")
     
+    # --- SECCIÓN EDITABLE DEL PRESUPUESTO ---
+    with st.expander("🔍 Editar Desglose Presupuesto Casa (Google Sheets)"):
+        st.info("Modifica los montos abajo y presiona 'Actualizar Presupuesto' para recalcular aportes.")
+        
+        # Editor de presupuesto
+        df_pres_edit = st.data_editor(
+            df_presupuesto,
+            column_config={
+                "Monto_Mensual": st.column_config.NumberColumn("Monto ($)", format="$ %d")
+            },
+            use_container_width=True,
+            hide_index=True,
+            key="editor_presupuesto_plan"
+        )
+        
+        if st.button("Actualizar Presupuesto Base"):
+            conn.update(worksheet="Presupuesto", data=df_pres_edit)
+            st.success("✅ Presupuesto actualizado en Google Sheets.")
+            st.rerun()
+
+    st.subheader("Detalle de Transferencia")
     detalle = pd.DataFrame({
         "Ítem": ["🏠 Hipotecario (20.77 UF)", "📑 DEDE (15.18 UF)", "🧾 Presupuesto Casa"],
         "Total": [formatear_punto(hipo_total), formatear_punto(dede_total), formatear_punto(bipers_total)],
@@ -59,16 +76,10 @@ with tabs[0]:
         "Laura": [formatear_punto(hipo_l), formatear_punto(dede_l), formatear_punto(bipers_l)]
     })
     st.table(detalle)
-
-    # --- NUEVA SECCIÓN: DESPLEGABLE DE PRESUPUESTO ---
-    with st.expander("🔍 Ver desglose del Presupuesto Casa (Google Sheets)"):
-        df_pres_ver = df_presupuesto.copy()
-        df_pres_ver["Monto_Mensual"] = df_pres_ver["Monto_Mensual"].apply(formatear_punto)
-        st.table(df_pres_ver)
     
     st.info(f"📝 **Mensaje DEDE:**\n\nRepertorio 2497 del 2023 OT 786773 deuda Karen Andrea cuota {cuota_actual}")
 
-# --- EL RESTO DEL CÓDIGO SE MANTIENE IGUAL PARA REGISTRO, CONCILIACIÓN Y EDICIÓN ---
+# --- RESTO DEL CÓDIGO (REGISTRO, CONCILIAR, RESUMEN, EDITAR GASTOS) ---
 with tabs[1]:
     with st.form("f_gasto", clear_on_submit=True):
         f = st.date_input("Fecha")
