@@ -4,7 +4,16 @@ import pandas as pd
 from datetime import datetime
 
 st.set_page_config(page_title="Gastos Familia", layout="wide")
-conn = st.connection("gsheets", type=GSheetsConnection)
+
+# Inicialización de conexión segura
+try:
+    conn = st.connection("gsheets", type=GSheetsConnection)
+    # CARGA DE DATOS: ttl="1s" para evitar el APIError por saturación
+    df_presupuesto = conn.read(worksheet="Presupuesto", ttl="1s")
+    df_gastos_raw = conn.read(worksheet="Gastos", ttl="1s")
+except Exception as e:
+    st.error("⚠️ Error de conexión con Google Sheets. Reintenta en unos segundos.")
+    st.stop()
 
 def formatear_punto(valor):
     try:
@@ -12,11 +21,7 @@ def formatear_punto(valor):
     except:
         return "$ 0"
 
-# --- CARGA DE DATOS ---
-df_presupuesto = conn.read(worksheet="Presupuesto", ttl="0")
-df_gastos_raw = conn.read(worksheet="Gastos", ttl="0")
-
-# Asegurar que la columna Fecha sea datetime desde el inicio
+# Normalización de fechas inmediata
 df_gastos_raw['Fecha'] = pd.to_datetime(df_gastos_raw['Fecha'], errors='coerce').dt.normalize()
 df_gastos_raw = df_gastos_raw.dropna(subset=['Fecha'])
 
@@ -69,7 +74,6 @@ with tabs[0]:
             {"Fecha": fecha_ini, "Categoria": "DEDE", "Monto": dede_t, "Descripcion": f"Cuota {cuota_actual}", "Usuario": "Agustín", "Retirado": "No"}
         ])
         df_subir = pd.concat([df_gastos_raw, nuevas_deudas], ignore_index=True)
-        # Conversión segura: asegurar datetime antes de strftime
         df_subir['Fecha'] = pd.to_datetime(df_subir['Fecha']).dt.strftime('%Y-%m-%d')
         conn.update(worksheet="Gastos", data=df_subir)
         st.cache_data.clear()
@@ -91,8 +95,8 @@ with tabs[1]:
         u = st.radio("Pagado por", ["Agustín", "Laura"], horizontal=True)
         d = st.text_input("Nota")
         if st.form_submit_button("Guardar"):
-            nuevo_registro = pd.DataFrame([{"Fecha": f.strftime("%Y-%m-%d"), "Categoria": cat, "Monto": m, "Descripcion": d, "Usuario": u, "Retirado": "No"}])
-            df_subir = pd.concat([df_gastos_raw, nuevo_registro], ignore_index=True)
+            nuevo = pd.DataFrame([{"Fecha": f.strftime("%Y-%m-%d"), "Categoria": cat, "Monto": m, "Descripcion": d, "Usuario": u, "Retirado": "No"}])
+            df_subir = pd.concat([df_gastos_raw, nuevo], ignore_index=True)
             df_subir['Fecha'] = pd.to_datetime(df_subir['Fecha']).dt.strftime('%Y-%m-%d')
             conn.update(worksheet="Gastos", data=df_subir)
             st.cache_data.clear()
@@ -158,7 +162,6 @@ with tabs[4]:
     df_ed_view['Fecha'] = df_ed_view['Fecha'].dt.strftime("%Y-%m-%d")
     df_ed = st.data_editor(df_ed_view, num_rows="dynamic", use_container_width=True)
     if st.button("Guardar Cambios Maestros"):
-        # Asegurar formato antes de guardar desde edición manual
         df_ed['Fecha'] = pd.to_datetime(df_ed['Fecha']).dt.strftime('%Y-%m-%d')
         conn.update(worksheet="Gastos", data=df_ed)
         st.cache_data.clear()
