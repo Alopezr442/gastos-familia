@@ -29,12 +29,18 @@ with tabs[0]:
     mes_actual = datetime.now().month
     cuota_actual = 35 + (mes_actual - 3)
     
+    # 1. Cálculos Base
     hipo_total = 20.77 * col_uf
     dede_total = 15.18 * col_uf
     bipers_total = df_presupuesto["Monto_Mensual"].sum()
     
-    total_a = (hipo_total * 0.748) + (dede_total * 0.5) + (bipers_total * 0.858)
-    total_l = (hipo_total * 0.252) + (dede_total * 0.5) + (bipers_total * 0.142)
+    # 2. Definición de Proporciones (Corrección del NameError)
+    hipo_a, hipo_l = hipo_total * 0.748, hipo_total * 0.252
+    dede_a, dede_l = dede_total * 0.5, dede_total * 0.5
+    bipers_a, bipers_l = bipers_total * 0.858, bipers_total * 0.142
+    
+    total_a = hipo_a + dede_a + bipers_a
+    total_l = hipo_l + dede_l + bipers_l
     total_deposito = total_a + total_l
 
     c1, c2, c3 = st.columns(3)
@@ -62,68 +68,60 @@ with tabs[0]:
     st.table(detalle)
     st.info(f"📝 **Mensaje DEDE:** Repertorio 2497 del 2023 OT 786773 deuda Karen Andrea cuota {cuota_actual}")
 
-# --- TAB 2: CONCILIAR (AHORA EDITABLE) ---
+    with st.expander("🔍 Gestionar Categorías y Montos del Presupuesto"):
+        df_pres_edit = st.data_editor(df_presupuesto, column_config={"Monto_Mensual": st.column_config.NumberColumn("Monto ($)", format="$ %d")}, num_rows="dynamic", use_container_width=True, hide_index=True)
+        if st.button("Guardar Estructura"):
+            conn.update(worksheet="Presupuesto", data=df_pres_edit.dropna(subset=["Categoria"]))
+            st.rerun()
+
+# --- TAB 2: CONCILIAR (EDITABLE PARA CUOTA FLEXIBLE) ---
 with tabs[2]:
     st.subheader("Pendientes de retiro")
-    st.caption("Puedes editar el 'Monto' antes de marcar el check si usas Cuota Flexible.")
-    
     df_pend = df_gastos[df_gastos['Retirado'] == 'No'].copy()
-    
     if not df_pend.empty:
         df_pend["Confirmar"] = False
-        # Usamos data_editor permitiendo editar la columna Monto
         ed_puntos = st.data_editor(
             df_pend[["Fecha", "Categoria", "Monto", "Descripcion", "Confirmar"]],
             column_config={
                 "Monto": st.column_config.NumberColumn("Monto ($)", format="$ %d"),
                 "Confirmar": st.column_config.CheckboxColumn("¿Retirar?", default=False)
             },
-            disabled=["Fecha", "Categoria", "Descripcion"], # Bloqueamos lo demás, dejamos Monto libre
-            use_container_width=True,
-            hide_index=True,
-            key="editor_conciliacion_flexible"
+            disabled=["Fecha", "Categoria", "Descripcion"],
+            use_container_width=True, hide_index=True, key="ed_concilia"
         )
-        
         if st.button("Confirmar y Actualizar Balance"):
-            # Aplicamos los cambios (tanto el nuevo monto como el estado de retiro)
             for i, row in ed_puntos.iterrows():
                 real_idx = df_pend.index[i]
-                # Actualizar monto por si hubo cambio en cuota flexible
                 df_gastos.at[real_idx, "Monto"] = row["Monto"]
-                # Si marcó el check, retirar
-                if row["Confirmar"]:
-                    df_gastos.at[real_idx, "Retirado"] = "Sí"
-            
+                if row["Confirmar"]: df_gastos.at[real_idx, "Retirado"] = "Sí"
             conn.update(worksheet="Gastos", data=df_gastos)
-            st.success("✅ Datos actualizados y movimientos registrados.")
             st.rerun()
-    else:
-        st.info("Sin retiros pendientes.")
+    else: st.info("Sin retiros pendientes.")
 
-# --- TAB 3: BALANCE (Actualizado según montos editados) ---
+# --- TAB 3: BALANCE ---
 with tabs[3]:
     m_ya = df_gastos[df_gastos['Retirado'] == 'Sí']['Monto'].sum()
     m_po = df_gastos[df_gastos['Retirado'] == 'No']['Monto'].sum()
     s_ba = total_deposito - m_ya
     s_fi = s_ba - m_po
-
     cb1, cb2, cb3 = st.columns(3)
     cb1.metric("Saldo actual en Banco", formatear_punto(s_ba))
     cb2.metric("Pendiente por Retirar", formatear_punto(m_po))
     cb3.metric("Saldo Final Disponible", formatear_punto(s_fi))
-    
     res = pd.merge(df_presupuesto, df_gastos.groupby("Categoria")["Monto"].sum().reset_index(), on="Categoria", how="left").fillna(0)
     res["Disponible"] = res["Monto_Mensual"] - res["Monto"]
-    for c in ["Monto_Mensual", "Monto", "Disponible"]: res[c] = res[c].apply(formatear_punto)
-    st.table(res)
+    res_v = res.copy()
+    for c in ["Monto_Mensual", "Monto", "Disponible"]: res_v[c] = res_v[c].apply(formatear_punto)
+    st.table(res_v)
 
-# Resto de pestañas (Registrar y Editar) se mantienen con lógica estándar
+# --- TAB 1 y 4: REGISTRO Y EDICIÓN ---
 with tabs[1]:
     with st.form("f_reg"):
         f, cat = st.date_input("Fecha"), st.selectbox("Cat", df_presupuesto["Categoria"].unique())
-        m = st.number_input("Monto", step=1000)
+        m, u = st.number_input("Monto", step=1000), st.radio("Pagado por", ["Agustín", "Laura"])
+        d = st.text_input("Nota")
         if st.form_submit_button("Guardar"):
-            n = pd.DataFrame([{"Fecha": f.strftime("%Y-%m-%d"), "Categoria": cat, "Monto": m, "Retirado": "No"}])
+            n = pd.DataFrame([{"Fecha": f.strftime("%Y-%m-%d"), "Categoria": cat, "Monto": m, "Descripcion": d, "Usuario": u, "Retirado": "No"}])
             conn.update(worksheet="Gastos", data=pd.concat([df_gastos_raw, n], ignore_index=True)); st.rerun()
 
 with tabs[4]:
