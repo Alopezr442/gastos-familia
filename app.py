@@ -28,7 +28,7 @@ with tab1:
             categoria = st.selectbox("Categoría", df_presupuesto["Categoria"].unique())
         with col2:
             monto = st.number_input("Monto ($)", min_value=0, step=1000)
-            usuario = st.radio("Pagado por", ["Él", "Ella"], horizontal=True)
+            usuario = st.radio("Pagado por", ["Agustin", "Laura"], horizontal=True)
         
         descripcion = st.text_input("Nota (opcional)")
         
@@ -57,7 +57,8 @@ with tab2:
         edited_pendientes = st.data_editor(
             df_pendientes[["Fecha", "Categoria", "Monto", "Usuario", "Descripcion", "Check_Retiro"]],
             column_config={
-                "Monto": st.column_config.NumberColumn("Monto", format="$ %d"), # SEPARADOR DE MILES AQUÍ
+                # FORMATO MONEDA FORZADO (Punto como miles)
+                "Monto": st.column_config.NumberColumn("Monto", format="$%d", step=1), 
                 "Check_Retiro": st.column_config.CheckboxColumn("¿Retirar?", default=False)
             },
             disabled=["Fecha", "Categoria", "Monto", "Usuario", "Descripcion"],
@@ -76,20 +77,20 @@ with tab2:
 # --- TAB 3: RESUMEN ---
 with tab3:
     por_retirar = df_gastos[df_gastos['Retirado'] == 'No']['Monto'].sum()
-    st.metric("Total por retirar de la Bipersonal", f"$ {int(por_retirar):,}")
+    # Aquí usamos f-string para asegurar el punto manual en la métrica
+    st.metric("Total por retirar de la Bipersonal", f"$ {int(por_retirar):,}".replace(",", "."))
     st.divider()
     
     gastos_totales = df_gastos.groupby("Categoria")["Monto"].sum().reset_index()
     resumen = pd.merge(df_presupuesto, gastos_totales, on="Categoria", how="left").fillna(0)
     resumen["Disponible"] = resumen["Monto_Mensual"] - resumen["Monto"]
     
-    # Formato de miles para la tabla de resumen
     st.dataframe(
         resumen, 
         column_config={
-            "Monto_Mensual": st.column_config.NumberColumn("Presupuesto", format="$ %d"),
-            "Monto": st.column_config.NumberColumn("Gastado", format="$ %d"),
-            "Disponible": st.column_config.NumberColumn("Disponible", format="$ %d")
+            "Monto_Mensual": st.column_config.NumberColumn("Presupuesto", format="$%d"),
+            "Monto": st.column_config.NumberColumn("Gastado", format="$%d"),
+            "Disponible": st.column_config.NumberColumn("Disponible", format="$%d")
         },
         use_container_width=True, hide_index=True
     )
@@ -104,7 +105,7 @@ with tab4:
         use_container_width=True,
         hide_index=False,
         column_config={
-            "Monto": st.column_config.NumberColumn("Monto", format="$ %d"), # SEPARADOR DE MILES AQUÍ
+            "Monto": st.column_config.NumberColumn("Monto", format="$%d"), 
             "Retirado": st.column_config.SelectboxColumn("Estado Retiro", options=["Sí", "No"])
         }
     )
