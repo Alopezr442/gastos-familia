@@ -7,10 +7,13 @@ st.set_page_config(page_title="Gastos Familia", layout="wide")
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def formatear_punto(valor):
-    return f"$ {int(valor):,}".replace(",", ".")
+    try:
+        return f"$ {int(valor):,}".replace(",", ".")
+    except:
+        return "$ 0"
 
 # Carga de datos
-df_presupuesto = conn.read(worksheet="Presupuesto", ttl="0") # TTL 0 para ver cambios inmediatos
+df_presupuesto = conn.read(worksheet="Presupuesto", ttl="0")
 df_gastos_raw = conn.read(worksheet="Gastos", ttl="0")
 df_gastos = df_gastos_raw.copy()
 
@@ -29,12 +32,12 @@ with tabs[0]:
     mes_actual = datetime.now().month
     cuota_actual = 35 + (mes_actual - 3)
     
-    # 1. Cálculos Base
+    # Cálculos Base
     hipo_total = 20.77 * uf_val
     dede_total = 15.18 * uf_val
     bipers_total = df_presupuesto["Monto_Mensual"].sum()
     
-    # 2. Proporciones
+    # Proporciones
     hipo_a, hipo_l = hipo_total * 0.748, hipo_total * 0.252
     dede_a, dede_l = dede_total * 0.5, dede_total * 0.5
     bipers_a, bipers_l = bipers_total * 0.858, bipers_total * 0.142
@@ -48,24 +51,27 @@ with tabs[0]:
     
     st.divider()
     
-    # --- SECCIÓN EDITABLE DEL PRESUPUESTO ---
-    with st.expander("🔍 Editar Desglose Presupuesto Casa (Google Sheets)"):
-        st.info("Modifica los montos abajo y presiona 'Actualizar Presupuesto' para recalcular aportes.")
+    # --- SECCIÓN EDITABLE DINÁMICA DEL PRESUPUESTO ---
+    with st.expander("🔍 Gestionar Categorías y Montos del Presupuesto"):
+        st.info("Para añadir: Desliza hasta la última fila. Para quitar: Selecciona la fila y presiona 'Suprimir'.")
         
-        # Editor de presupuesto
         df_pres_edit = st.data_editor(
             df_presupuesto,
             column_config={
-                "Monto_Mensual": st.column_config.NumberColumn("Monto ($)", format="$ %d")
+                "Categoria": st.column_config.TextColumn("Categoría", help="Nombre del gasto"),
+                "Monto_Mensual": st.column_config.NumberColumn("Monto ($)", format="$ %d", min_value=0)
             },
+            num_rows="dynamic", # PERMITE AÑADIR Y QUITAR FILAS
             use_container_width=True,
-            hide_index=True,
+            hide_index=False,
             key="editor_presupuesto_plan"
         )
         
-        if st.button("Actualizar Presupuesto Base"):
+        if st.button("Guardar Cambios en Estructura"):
+            # Limpiar filas vacías que puedan quedar al agregar
+            df_pres_edit = df_pres_edit.dropna(subset=["Categoria"])
             conn.update(worksheet="Presupuesto", data=df_pres_edit)
-            st.success("✅ Presupuesto actualizado en Google Sheets.")
+            st.success("✅ Estructura de presupuesto actualizada.")
             st.rerun()
 
     st.subheader("Detalle de Transferencia")
