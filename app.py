@@ -52,12 +52,14 @@ with tab2:
     df_pendientes = df_gastos[df_gastos['Retirado'] == 'No'].copy()
     
     if not df_pendientes.empty:
-        # Columna temporal para el check
         df_pendientes['Check_Retiro'] = False
         
         edited_pendientes = st.data_editor(
             df_pendientes[["Fecha", "Categoria", "Monto", "Usuario", "Descripcion", "Check_Retiro"]],
-            column_config={"Check_Retiro": st.column_config.CheckboxColumn("¿Retirar?", default=False)},
+            column_config={
+                "Monto": st.column_config.NumberColumn("Monto", format="$ %d"), # SEPARADOR DE MILES AQUÍ
+                "Check_Retiro": st.column_config.CheckboxColumn("¿Retirar?", default=False)
+            },
             disabled=["Fecha", "Categoria", "Monto", "Usuario", "Descripcion"],
             use_container_width=True, hide_index=True
         )
@@ -74,30 +76,40 @@ with tab2:
 # --- TAB 3: RESUMEN ---
 with tab3:
     por_retirar = df_gastos[df_gastos['Retirado'] == 'No']['Monto'].sum()
-    st.metric("Total por retirar de la Bipersonal", f"${int(por_retirar):,}")
+    st.metric("Total por retirar de la Bipersonal", f"$ {int(por_retirar):,}")
     st.divider()
+    
     gastos_totales = df_gastos.groupby("Categoria")["Monto"].sum().reset_index()
     resumen = pd.merge(df_presupuesto, gastos_totales, on="Categoria", how="left").fillna(0)
     resumen["Disponible"] = resumen["Monto_Mensual"] - resumen["Monto"]
-    st.dataframe(resumen, use_container_width=True, hide_index=True)
+    
+    # Formato de miles para la tabla de resumen
+    st.dataframe(
+        resumen, 
+        column_config={
+            "Monto_Mensual": st.column_config.NumberColumn("Presupuesto", format="$ %d"),
+            "Monto": st.column_config.NumberColumn("Gastado", format="$ %d"),
+            "Disponible": st.column_config.NumberColumn("Disponible", format="$ %d")
+        },
+        use_container_width=True, hide_index=True
+    )
 
 # --- TAB 4: EDICIÓN Y BORRADO ---
 with tab4:
     st.subheader("Consola de Edición")
-    st.caption("Puedes editar cualquier celda directamente o seleccionar una fila y presionar 'Suprimir' en tu teclado para borrar.")
     
-    # Editor completo (permite borrar filas y editar celdas)
     df_editado = st.data_editor(
         df_gastos,
-        num_rows="dynamic", # Permite añadir/borrar filas
+        num_rows="dynamic",
         use_container_width=True,
         hide_index=False,
         column_config={
+            "Monto": st.column_config.NumberColumn("Monto", format="$ %d"), # SEPARADOR DE MILES AQUÍ
             "Retirado": st.column_config.SelectboxColumn("Estado Retiro", options=["Sí", "No"])
         }
     )
     
     if st.button("Guardar Cambios Maestros"):
         conn.update(worksheet="Gastos", data=df_editado)
-        st.success("✅ Base de datos actualizada correctamente")
+        st.success("✅ Base de datos actualizada")
         st.rerun()
