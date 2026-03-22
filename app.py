@@ -6,18 +6,20 @@ from datetime import datetime
 st.set_page_config(page_title="Gastos Familia", layout="wide")
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# Carga de datos
-df_presupuesto = conn.read(worksheet="Presupuesto", ttl="10m")
+# Carga de datos sin caché para evitar desfases en conciliación
+df_presupuesto = conn.read(worksheet="Presupuesto", ttl="5m")
 df_gastos = conn.read(worksheet="Gastos", ttl="0")
 
-# Asegurar que la columna 'Retirado' existe
+# Asegurar columna Retirado
 if 'Retirado' not in df_gastos.columns:
-    df_gastos['Retirado'] = 'No'
+    df_gastos['Retirado'] = False
+
+# Convertir a booleano para el checkbox de la interfaz
+df_gastos['Retirado'] = df_gastos['Retirado'].map({'Sí': True, 'No': False}).fillna(False)
 
 st.title("🏠 Gestión de Gastos y Cuenta Bipersonal")
 
-# --- NAVEGACIÓN POR PESTAÑAS ---
-tab1, tab2, tab3 = st.tabs(["➕ Registrar Gasto", "🏦 Conciliar Cuenta", "📊 Resumen"])
+tab1, tab2, tab3 = st.tabs(["➕ Registrar Gasto", "🏦 Conciliar (Check)", "📊 Resumen"])
 
 with tab1:
     with st.form("formulario_gasto", clear_on_submit=True):
@@ -38,50 +40,47 @@ with tab1:
                 "Monto": monto,
                 "Descripcion": descripcion,
                 "Usuario": usuario,
-                "Retirado": "No" # Por defecto entra como no retirado
+                "Retirado": "No"
             }])
-            df_actualizado = pd.concat([df_gastos, nuevo], ignore_index=True)
+            df_actualizado = pd.concat([df_gastos.replace({True: 'Sí', False: 'No'}), nuevo], ignore_index=True)
             conn.update(worksheet="Gastos", data=df_actualizado)
-            st.success("✅ Gasto registrado y pendiente de retiro")
+            st.success("✅ Registrado")
             st.rerun()
 
 with tab2:
-    st.subheader("Pendientes de retiro (Cuenta Bipersonal)")
-    # Filtrar solo lo que no se ha retirado
-    pendientes = df_gastos[df_gastos['Retirado'] == 'No']
+    st.subheader("Selecciona los ítems ya retirados de la cuenta")
     
-    if not pendientes.empty:
-        # Usamos st.data_editor para permitir marcar el retiro directamente
-        edited_df = st.data_editor(
-            df_gastos,
-            column_config={
-                "Retirado": st.column_config.SelectboxColumn(
-                    "¿Retirado?",
-                    options=["Sí", "No"],
-                    required=True,
-                )
-            },
-            disabled=["Fecha", "Categoria", "Monto", "Usuario"], # Solo dejamos editar 'Retirado'
-            use_container_width=True,
-            hide_index=True
-        )
+    # Editor de datos con checkboxes
+    edited_df = st.data_editor(
+        df_gastos,
+        column_config={
+            "Retirado": st.column_config.CheckboxColumn(
+                "¿Retirado?",
+                help="Marca los que ya sacaste de la cuenta bipersonal",
+                default=False,
+            )
+        },
+        disabled=["Fecha", "Categoria", "Monto", "Usuario", "Descripcion"],
+        use_container_width=True,
+        hide_index=True
+    )
+    
+    if st.button("Confirmar y Actualizar Cuenta"):
+        # Convertir de nuevo a texto para el Excel
+        df_final = edited_df.copy()
+        df_final['Retirado'] = df_final['Retirado'].map({True: 'Sí', False: 'No'})
         
-        if st.button("Confirmar Retiros en Cuenta"):
-            conn.update(worksheet="Gastos", data=edited_df)
-            st.success("✅ Cuenta Bipersonal actualizada")
-            st.rerun()
-    else:
-        st.info("Todo el dinero ya ha sido retirado de la cuenta.")
+        conn.update(worksheet="Gastos", data=df_final)
+        st.success("✅ Movimientos confirmados en el Excel")
+        st.rerun()
 
 with tab3:
-    st.subheader("Resumen Mensual")
-    # Cálculos de saldos
+    # Métricas de control
+    por_retirar = df_gastos[df_gastos['Retirado'] == False]['Monto'].sum()
+    st.metric("Pendiente por retirar de la Bipersonal", f"${int(por_retirar):,}")
+    
+    st.divider()
     gastos_totales = df_gastos.groupby("Categoria")["Monto"].sum().reset_index()
     resumen = pd.merge(df_presupuesto, gastos_totales, on="Categoria", how="left").fillna(0)
     resumen["Disponible"] = resumen["Monto_Mensual"] - resumen["Monto"]
-    
-    st.dataframe(resumen, use_container_width=True, hide_index=True)
-    
-    # Mostrar cuánto dinero "debe" la cuenta bipersonal aún
-    por_retirar = df_gastos[df_gastos['Retirado'] == 'No']['Monto'].sum()
-    st.metric("Total por retirar de Cuenta Bipersonal", f"${int(por_retirar):,}")
+    st.table(resumen)
