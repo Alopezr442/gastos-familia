@@ -12,24 +12,23 @@ def formatear_punto(valor):
     except:
         return "$ 0"
 
-# --- CARGA Y LIMPIEZA DE DATOS ---
+# --- CARGA DE DATOS ---
 df_presupuesto = conn.read(worksheet="Presupuesto", ttl="0")
 df_gastos_raw = conn.read(worksheet="Gastos", ttl="0")
 
-# Limpieza crítica de fechas: Eliminar horas y asegurar formato datetime
+# Normalización de fechas al leer para evitar el error de horas
 df_gastos_raw['Fecha'] = pd.to_datetime(df_gastos_raw['Fecha'], errors='coerce').dt.normalize()
-df_gastos_raw = df_gastos_raw.dropna(subset=['Fecha']) # Eliminar filas con fechas corruptas
+df_gastos_raw = df_gastos_raw.dropna(subset=['Fecha'])
 
-# Sidebar para control de tiempo
-st.sidebar.title("🗓️ Periodo de Control")
+# Sidebar de Control
+st.sidebar.title("🗓️ Periodo")
 meses_dict = {1:"Enero", 2:"Febrero", 3:"Marzo", 4:"Abril", 5:"Mayo", 6:"Junio", 
               7:"Julio", 8:"Agosto", 9:"Septiembre", 10:"Octubre", 11:"Noviembre", 12:"Diciembre"}
-
-mes_sel_nombre = st.sidebar.selectbox("Seleccionar Mes", list(meses_dict.values()), index=datetime.now().month-1)
+mes_sel_nombre = st.sidebar.selectbox("Mes", list(meses_dict.values()), index=datetime.now().month-1)
 anio_sel = st.sidebar.number_input("Año", value=datetime.now().year, step=1)
 mes_sel_num = [k for k, v in meses_dict.items() if v == mes_sel_nombre][0]
 
-# Filtrar Gastos por el periodo seleccionado
+# Filtro por periodo
 df_gastos = df_gastos_raw[
     (df_gastos_raw['Fecha'].dt.month == mes_sel_num) & 
     (df_gastos_raw['Fecha'].dt.year == anio_sel)
@@ -39,55 +38,51 @@ if 'Retirado' not in df_gastos.columns:
     df_gastos['Retirado'] = 'No'
 
 st.title(f"🏠 Gestión {mes_sel_nombre} {anio_sel}")
-
-tabs = st.tabs(["🚀 Planificación", "➕ Registrar", "🏦 Conciliar", "📊 Balance y Resumen", "⚙️ Editar Todo"])
+tabs = st.tabs(["🚀 Planificación", "➕ Registrar", "🏦 Conciliar", "📊 Balance", "⚙️ Editar Todo"])
 
 # --- TAB 0: PLANIFICACIÓN ---
 with tabs[0]:
     st.header(f"📅 Plan Mensual")
     col_uf = st.number_input("UF del día 1:", value=39796.31, step=0.1, format="%.2f")
-    
-    # Cuota DEDE dinámica
     meses_dif = (anio_sel - 2026) * 12 + (mes_sel_num - 3)
     cuota_actual = 35 + meses_dif
     
-    hipo_total = 20.77 * col_uf
-    dede_total = 15.18 * col_uf
-    bipers_total = df_presupuesto["Monto_Mensual"].sum()
+    hipo_t, dede_t = 20.77 * col_uf, 15.18 * col_uf
+    bipers_t = df_presupuesto["Monto_Mensual"].sum()
     
-    hipo_a, hipo_l = hipo_total * 0.748, hipo_total * 0.252
-    dede_a, dede_l = dede_total * 0.5, dede_total * 0.5
-    bipers_a, bipers_l = bipers_total * 0.858, bipers_total * 0.142
+    hipo_a, hipo_l = hipo_t * 0.748, hipo_t * 0.252
+    dede_a, dede_l = dede_t * 0.5, dede_t * 0.5
+    bipers_a, bipers_l = bipers_t * 0.858, bipers_t * 0.142
     
     total_a, total_l = hipo_a + dede_a + bipers_a, hipo_l + dede_l + bipers_l
     total_deposito = total_a + total_l
 
     c1, c2, c3 = st.columns(3)
-    c1.metric(f"Aporte Agustín", formatear_punto(total_a))
-    c2.metric(f"Aporte Laura", formatear_punto(total_l))
+    c1.metric("Agustín", formatear_punto(total_a))
+    c2.metric("Laura", formatear_punto(total_l))
     c3.metric("Total Mes", formatear_punto(total_deposito))
     
-    if st.button("🚀 Iniciar este Mes (Cargar Deudas)"):
-        fecha_inicio = datetime(anio_sel, mes_sel_num, 1).strftime("%Y-%m-%d")
-        deudas = pd.DataFrame([
-            {"Fecha": fecha_inicio, "Categoria": "Hipotecario", "Monto": hipo_total, "Descripcion": "Dividendo", "Usuario": "Agustín", "Retirado": "No"},
-            {"Fecha": fecha_inicio, "Categoria": "DEDE", "Monto": dede_total, "Descripcion": f"Cuota {cuota_actual}", "Usuario": "Agustín", "Retirado": "No"}
+    if st.button("🚀 Iniciar Mes (Cargar Créditos)"):
+        fecha_ini = datetime(anio_sel, mes_sel_num, 1).strftime("%Y-%m-%d")
+        nuevas_deudas = pd.DataFrame([
+            {"Fecha": fecha_ini, "Categoria": "Hipotecario", "Monto": hipo_t, "Descripcion": "Dividendo", "Usuario": "Agustín", "Retirado": "No"},
+            {"Fecha": fecha_ini, "Categoria": "DEDE", "Monto": dede_t, "Descripcion": f"Cuota {cuota_actual}", "Usuario": "Agustín", "Retirado": "No"}
         ])
-        conn.update(worksheet="Gastos", data=pd.concat([df_gastos_raw, deudas], ignore_index=True))
+        # Unir, resetear índice y forzar fecha string antes de subir
+        df_subir = pd.concat([df_gastos_raw, nuevas_deudas], ignore_index=True)
+        df_subir['Fecha'] = df_subir['Fecha'].dt.strftime('%Y-%m-%d')
+        conn.update(worksheet="Gastos", data=df_subir)
         st.cache_data.clear()
         st.rerun()
 
-    st.subheader("📊 Detalle")
-    detalle = pd.DataFrame({
-        "Ítem": ["Hipotecario", "DEDE", "Presupuesto Casa"],
-        "Total": [formatear_punto(hipo_total), formatear_punto(dede_total), formatear_punto(bipers_total)],
+    st.table(pd.DataFrame({
+        "Ítem": ["Hipotecario", "DEDE", "Presupuesto"],
+        "Total": [formatear_punto(hipo_t), formatear_punto(dede_t), formatear_punto(bipers_t)],
         "Agustín": [formatear_punto(hipo_a), formatear_punto(dede_a), formatear_punto(bipers_a)],
         "Laura": [formatear_punto(hipo_l), formatear_punto(dede_l), formatear_punto(bipers_l)]
-    })
-    st.table(detalle)
-    st.info(f"📝 **Mensaje DEDE:** Repertorio 2497 del 2023 OT 786773 deuda Karen Andrea cuota {cuota_actual}")
+    }))
 
-# --- TAB 1: REGISTRO ---
+# --- TAB 1: REGISTRAR ---
 with tabs[1]:
     with st.form("f_reg", clear_on_submit=True):
         f = st.date_input("Fecha Gasto", value=datetime(anio_sel, mes_sel_num, 1))
@@ -96,9 +91,11 @@ with tabs[1]:
         u = st.radio("Pagado por", ["Agustín", "Laura"], horizontal=True)
         d = st.text_input("Nota")
         if st.form_submit_button("Guardar"):
-            # Forzamos guardado solo de fecha sin hora
             n = pd.DataFrame([{"Fecha": f.strftime("%Y-%m-%d"), "Categoria": cat, "Monto": m, "Descripcion": d, "Usuario": u, "Retirado": "No"}])
-            conn.update(worksheet="Gastos", data=pd.concat([df_gastos_raw, n], ignore_index=True))
+            df_subir = pd.concat([df_gastos_raw, n], ignore_index=True)
+            # Asegurar formato fecha string para evitar horas en Sheets
+            df_subir['Fecha'] = pd.to_datetime(df_subir['Fecha']).dt.strftime('%Y-%m-%d')
+            conn.update(worksheet="Gastos", data=df_subir)
             st.cache_data.clear()
             st.rerun()
 
@@ -110,19 +107,20 @@ with tabs[2]:
         ca.metric("Pendiente Agustín", formatear_punto(df_pend[df_pend['Usuario'] == 'Agustín']['Monto'].sum()))
         cl.metric("Pendiente Laura", formatear_punto(df_pend[df_pend['Usuario'] == 'Laura']['Monto'].sum()))
         
-        user_f = st.radio("Filtrar por:", ["Ambos", "Agustín", "Laura"], horizontal=True)
+        user_f = st.radio("Filtrar:", ["Ambos", "Agustín", "Laura"], horizontal=True)
         df_v = df_pend[df_pend['Usuario'] == user_f].copy() if user_f != "Ambos" else df_pend.copy()
         
         if user_f != "Ambos" and st.button(f"Retirar TODO de {user_f}"):
             df_gastos_raw.loc[df_pend[df_pend['Usuario'] == user_f].index, 'Retirado'] = 'Sí'
-            conn.update(worksheet="Gastos", data=df_gastos_raw)
+            df_subir = df_gastos_raw.copy()
+            df_subir['Fecha'] = df_subir['Fecha'].dt.strftime('%Y-%m-%d')
+            conn.update(worksheet="Gastos", data=df_subir)
             st.cache_data.clear()
             st.rerun()
 
         df_v["Check"] = False
-        # Limpiar visualización de fecha en la tabla
-        df_v["Fecha"] = df_v["Fecha"].dt.strftime("%d/%m/%Y")
-        ed = st.data_editor(df_v[["Fecha", "Categoria", "Monto", "Usuario", "Check"]], 
+        df_v["Fecha_V"] = df_v["Fecha"].dt.strftime("%d/%m/%Y")
+        ed = st.data_editor(df_v[["Fecha_V", "Categoria", "Monto", "Usuario", "Check"]], 
                             column_config={"Monto": st.column_config.NumberColumn(format="$ %d")},
                             use_container_width=True, hide_index=True)
         if st.button("Confirmar Manual"):
@@ -130,7 +128,9 @@ with tabs[2]:
                 idx_orig = df_v.index[i]
                 df_gastos_raw.at[idx_orig, "Monto"] = row["Monto"]
                 if row["Check"]: df_gastos_raw.at[idx_orig, "Retirado"] = "Sí"
-            conn.update(worksheet="Gastos", data=df_gastos_raw)
+            df_subir = df_gastos_raw.copy()
+            df_subir['Fecha'] = df_subir['Fecha'].dt.strftime('%Y-%m-%d')
+            conn.update(worksheet="Gastos", data=df_subir)
             st.cache_data.clear()
             st.rerun()
     else: st.info("Nada pendiente.")
@@ -141,7 +141,6 @@ with tabs[3]:
     m_no = df_gastos[df_gastos['Retirado'] == 'No']['Monto'].sum()
     s_ban = total_deposito - m_si
     s_dis = s_ban - m_no
-    
     cb1, cb2, cb3 = st.columns(3)
     cb1.metric("En Banco", formatear_punto(s_ban))
     cb2.metric("Por Retirar", formatear_punto(m_no))
@@ -154,9 +153,8 @@ with tabs[3]:
     for c in ["Monto_Mensual", "Monto", "Disponible"]: res[c] = res[c].apply(formatear_punto)
     st.table(res)
 
-# --- TAB 4: EDITAR TODO (Limpia formato antes de mostrar) ---
+# --- TAB 4: EDITAR TODO ---
 with tabs[4]:
-    st.subheader("Base de Datos Histórica")
     df_ed_view = df_gastos_raw.copy()
     df_ed_view['Fecha'] = df_ed_view['Fecha'].dt.strftime("%Y-%m-%d")
     df_ed = st.data_editor(df_ed_view, num_rows="dynamic", use_container_width=True)
