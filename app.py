@@ -12,10 +12,13 @@ def formatear_punto(valor):
     except:
         return "$ 0"
 
-# --- CARGA Y FILTRADO POR MES ---
-# Forzamos TTL=0 para inmediatez
+# --- CARGA Y LIMPIEZA DE DATOS ---
 df_presupuesto = conn.read(worksheet="Presupuesto", ttl="0")
 df_gastos_raw = conn.read(worksheet="Gastos", ttl="0")
+
+# Limpieza crítica de fechas: Eliminar horas y asegurar formato datetime
+df_gastos_raw['Fecha'] = pd.to_datetime(df_gastos_raw['Fecha'], errors='coerce').dt.normalize()
+df_gastos_raw = df_gastos_raw.dropna(subset=['Fecha']) # Eliminar filas con fechas corruptas
 
 # Sidebar para control de tiempo
 st.sidebar.title("🗓️ Periodo de Control")
@@ -24,12 +27,9 @@ meses_dict = {1:"Enero", 2:"Febrero", 3:"Marzo", 4:"Abril", 5:"Mayo", 6:"Junio",
 
 mes_sel_nombre = st.sidebar.selectbox("Seleccionar Mes", list(meses_dict.values()), index=datetime.now().month-1)
 anio_sel = st.sidebar.number_input("Año", value=datetime.now().year, step=1)
-
-# Convertir nombre a número para filtrar
 mes_sel_num = [k for k, v in meses_dict.items() if v == mes_sel_nombre][0]
 
-# Filtrar Gastos por el mes y año seleccionados
-df_gastos_raw['Fecha'] = pd.to_datetime(df_gastos_raw['Fecha'])
+# Filtrar Gastos por el periodo seleccionado
 df_gastos = df_gastos_raw[
     (df_gastos_raw['Fecha'].dt.month == mes_sel_num) & 
     (df_gastos_raw['Fecha'].dt.year == anio_sel)
@@ -47,8 +47,7 @@ with tabs[0]:
     st.header(f"📅 Plan Mensual")
     col_uf = st.number_input("UF del día 1:", value=39796.31, step=0.1, format="%.2f")
     
-    # Cuota DEDE dinámica (Marzo 2026 base 35)
-    # Diferencia de meses total entre fecha seleccionada y Marzo 2026
+    # Cuota DEDE dinámica
     meses_dif = (anio_sel - 2026) * 12 + (mes_sel_num - 3)
     cuota_actual = 35 + meses_dif
     
@@ -69,7 +68,6 @@ with tabs[0]:
     c3.metric("Total Mes", formatear_punto(total_deposito))
     
     if st.button("🚀 Iniciar este Mes (Cargar Deudas)"):
-        # Fecha del día 1 del mes seleccionado para los registros automáticos
         fecha_inicio = datetime(anio_sel, mes_sel_num, 1).strftime("%Y-%m-%d")
         deudas = pd.DataFrame([
             {"Fecha": fecha_inicio, "Categoria": "Hipotecario", "Monto": hipo_total, "Descripcion": "Dividendo", "Usuario": "Agustín", "Retirado": "No"},
@@ -89,7 +87,7 @@ with tabs[0]:
     st.table(detalle)
     st.info(f"📝 **Mensaje DEDE:** Repertorio 2497 del 2023 OT 786773 deuda Karen Andrea cuota {cuota_actual}")
 
-# --- TAB 1: REGISTRAR ---
+# --- TAB 1: REGISTRO ---
 with tabs[1]:
     with st.form("f_reg", clear_on_submit=True):
         f = st.date_input("Fecha Gasto", value=datetime(anio_sel, mes_sel_num, 1))
@@ -98,6 +96,7 @@ with tabs[1]:
         u = st.radio("Pagado por", ["Agustín", "Laura"], horizontal=True)
         d = st.text_input("Nota")
         if st.form_submit_button("Guardar"):
+            # Forzamos guardado solo de fecha sin hora
             n = pd.DataFrame([{"Fecha": f.strftime("%Y-%m-%d"), "Categoria": cat, "Monto": m, "Descripcion": d, "Usuario": u, "Retirado": "No"}])
             conn.update(worksheet="Gastos", data=pd.concat([df_gastos_raw, n], ignore_index=True))
             st.cache_data.clear()
@@ -121,6 +120,8 @@ with tabs[2]:
             st.rerun()
 
         df_v["Check"] = False
+        # Limpiar visualización de fecha en la tabla
+        df_v["Fecha"] = df_v["Fecha"].dt.strftime("%d/%m/%Y")
         ed = st.data_editor(df_v[["Fecha", "Categoria", "Monto", "Usuario", "Check"]], 
                             column_config={"Monto": st.column_config.NumberColumn(format="$ %d")},
                             use_container_width=True, hide_index=True)
@@ -132,7 +133,7 @@ with tabs[2]:
             conn.update(worksheet="Gastos", data=df_gastos_raw)
             st.cache_data.clear()
             st.rerun()
-    else: st.info("Nada pendiente para este mes.")
+    else: st.info("Nada pendiente.")
 
 # --- TAB 3: BALANCE ---
 with tabs[3]:
@@ -153,10 +154,12 @@ with tabs[3]:
     for c in ["Monto_Mensual", "Monto", "Disponible"]: res[c] = res[c].apply(formatear_punto)
     st.table(res)
 
-# --- TAB 4: EDITAR TODO (HISTORIAL) ---
+# --- TAB 4: EDITAR TODO (Limpia formato antes de mostrar) ---
 with tabs[4]:
-    st.subheader("Base de Datos Completa (Histórica)")
-    df_ed = st.data_editor(df_gastos_raw, num_rows="dynamic", use_container_width=True)
+    st.subheader("Base de Datos Histórica")
+    df_ed_view = df_gastos_raw.copy()
+    df_ed_view['Fecha'] = df_ed_view['Fecha'].dt.strftime("%Y-%m-%d")
+    df_ed = st.data_editor(df_ed_view, num_rows="dynamic", use_container_width=True)
     if st.button("Guardar Cambios Maestros"):
         conn.update(worksheet="Gastos", data=df_ed)
         st.cache_data.clear()
