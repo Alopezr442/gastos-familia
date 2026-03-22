@@ -3,6 +3,7 @@ from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime
 
+# Configuración de página e interfaz
 st.set_page_config(page_title="Gastos Familia", layout="wide")
 conn = st.connection("gsheets", type=GSheetsConnection)
 
@@ -12,10 +13,13 @@ def formatear_punto(valor):
     except:
         return "$ 0"
 
-# Carga de datos
+# CARGA INMEDIATA (Sin caché)
 df_presupuesto = conn.read(worksheet="Presupuesto", ttl="0")
 df_gastos_raw = conn.read(worksheet="Gastos", ttl="0")
 df_gastos = df_gastos_raw.copy()
+
+if 'Retirado' not in df_gastos.columns:
+    df_gastos['Retirado'] = 'No'
 
 st.title("🏠 Gestión de Gastos y Planificación")
 
@@ -34,7 +38,7 @@ with tabs[0]:
     dede_total = 15.18 * col_uf
     bipers_total = df_presupuesto["Monto_Mensual"].sum()
     
-    # 2. Definición de Proporciones (Corrección del NameError)
+    # 2. Proporciones
     hipo_a, hipo_l = hipo_total * 0.748, hipo_total * 0.252
     dede_a, dede_l = dede_total * 0.5, dede_total * 0.5
     bipers_a, bipers_l = bipers_total * 0.858, bipers_total * 0.142
@@ -56,6 +60,7 @@ with tabs[0]:
             {"Fecha": datetime.now().strftime("%Y-%m-%d"), "Categoria": "DEDE", "Monto": dede_total, "Descripcion": f"Cuota {cuota_actual}", "Usuario": "Bipersonal", "Retirado": "No"}
         ])
         conn.update(worksheet="Gastos", data=pd.concat([df_gastos_raw, deudas], ignore_index=True))
+        st.cache_data.clear()
         st.rerun()
 
     st.subheader("📊 Detalle de Transferencia")
@@ -72,9 +77,24 @@ with tabs[0]:
         df_pres_edit = st.data_editor(df_presupuesto, column_config={"Monto_Mensual": st.column_config.NumberColumn("Monto ($)", format="$ %d")}, num_rows="dynamic", use_container_width=True, hide_index=True)
         if st.button("Guardar Estructura"):
             conn.update(worksheet="Presupuesto", data=df_pres_edit.dropna(subset=["Categoria"]))
+            st.cache_data.clear()
             st.rerun()
 
-# --- TAB 2: CONCILIAR (EDITABLE PARA CUOTA FLEXIBLE) ---
+# --- TAB 1: REGISTRAR ---
+with tabs[1]:
+    with st.form("f_reg", clear_on_submit=True):
+        f = st.date_input("Fecha", value=datetime.now())
+        cat = st.selectbox("Categoría", df_presupuesto["Categoria"].unique())
+        m = st.number_input("Monto", min_value=0, step=1000)
+        u = st.radio("Pagado por", ["Agustín", "Laura"], horizontal=True)
+        d = st.text_input("Nota")
+        if st.form_submit_button("Guardar Gasto"):
+            n = pd.DataFrame([{"Fecha": f.strftime("%Y-%m-%d"), "Categoria": cat, "Monto": m, "Descripcion": d, "Usuario": u, "Retirado": "No"}])
+            conn.update(worksheet="Gastos", data=pd.concat([df_gastos_raw, n], ignore_index=True))
+            st.cache_data.clear()
+            st.rerun()
+
+# --- TAB 2: CONCILIAR (Editable para Cuota Flexible) ---
 with tabs[2]:
     st.subheader("Pendientes de retiro")
     df_pend = df_gastos[df_gastos['Retirado'] == 'No'].copy()
@@ -95,6 +115,7 @@ with tabs[2]:
                 df_gastos.at[real_idx, "Monto"] = row["Monto"]
                 if row["Confirmar"]: df_gastos.at[real_idx, "Retirado"] = "Sí"
             conn.update(worksheet="Gastos", data=df_gastos)
+            st.cache_data.clear()
             st.rerun()
     else: st.info("Sin retiros pendientes.")
 
@@ -108,22 +129,18 @@ with tabs[3]:
     cb1.metric("Saldo actual en Banco", formatear_punto(s_ba))
     cb2.metric("Pendiente por Retirar", formatear_punto(m_po))
     cb3.metric("Saldo Final Disponible", formatear_punto(s_fi))
+    
+    st.divider()
     res = pd.merge(df_presupuesto, df_gastos.groupby("Categoria")["Monto"].sum().reset_index(), on="Categoria", how="left").fillna(0)
     res["Disponible"] = res["Monto_Mensual"] - res["Monto"]
     res_v = res.copy()
     for c in ["Monto_Mensual", "Monto", "Disponible"]: res_v[c] = res_v[c].apply(formatear_punto)
     st.table(res_v)
 
-# --- TAB 1 y 4: REGISTRO Y EDICIÓN ---
-with tabs[1]:
-    with st.form("f_reg"):
-        f, cat = st.date_input("Fecha"), st.selectbox("Cat", df_presupuesto["Categoria"].unique())
-        m, u = st.number_input("Monto", step=1000), st.radio("Pagado por", ["Agustín", "Laura"])
-        d = st.text_input("Nota")
-        if st.form_submit_button("Guardar"):
-            n = pd.DataFrame([{"Fecha": f.strftime("%Y-%m-%d"), "Categoria": cat, "Monto": m, "Descripcion": d, "Usuario": u, "Retirado": "No"}])
-            conn.update(worksheet="Gastos", data=pd.concat([df_gastos_raw, n], ignore_index=True)); st.rerun()
-
+# --- TAB 4: EDICIÓN MAESTRA ---
 with tabs[4]:
     df_ed = st.data_editor(df_gastos, num_rows="dynamic", use_container_width=True)
-    if st.button("Guardar"): conn.update(worksheet="Gastos", data=df_ed); st.rerun()
+    if st.button("Guardar Cambios Maestros"):
+        conn.update(worksheet="Gastos", data=df_ed)
+        st.cache_data.clear()
+        st.rerun()
