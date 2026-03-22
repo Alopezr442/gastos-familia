@@ -16,7 +16,7 @@ def formatear_punto(valor):
 df_presupuesto = conn.read(worksheet="Presupuesto", ttl="0")
 df_gastos_raw = conn.read(worksheet="Gastos", ttl="0")
 
-# Normalización de fechas al leer para evitar el error de horas
+# Asegurar que la columna Fecha sea datetime desde el inicio
 df_gastos_raw['Fecha'] = pd.to_datetime(df_gastos_raw['Fecha'], errors='coerce').dt.normalize()
 df_gastos_raw = df_gastos_raw.dropna(subset=['Fecha'])
 
@@ -68,9 +68,9 @@ with tabs[0]:
             {"Fecha": fecha_ini, "Categoria": "Hipotecario", "Monto": hipo_t, "Descripcion": "Dividendo", "Usuario": "Agustín", "Retirado": "No"},
             {"Fecha": fecha_ini, "Categoria": "DEDE", "Monto": dede_t, "Descripcion": f"Cuota {cuota_actual}", "Usuario": "Agustín", "Retirado": "No"}
         ])
-        # Unir, resetear índice y forzar fecha string antes de subir
         df_subir = pd.concat([df_gastos_raw, nuevas_deudas], ignore_index=True)
-        df_subir['Fecha'] = df_subir['Fecha'].dt.strftime('%Y-%m-%d')
+        # Conversión segura: asegurar datetime antes de strftime
+        df_subir['Fecha'] = pd.to_datetime(df_subir['Fecha']).dt.strftime('%Y-%m-%d')
         conn.update(worksheet="Gastos", data=df_subir)
         st.cache_data.clear()
         st.rerun()
@@ -82,7 +82,7 @@ with tabs[0]:
         "Laura": [formatear_punto(hipo_l), formatear_punto(dede_l), formatear_punto(bipers_l)]
     }))
 
-# --- TAB 1: REGISTRAR ---
+# --- TAB 1: REGISTRO ---
 with tabs[1]:
     with st.form("f_reg", clear_on_submit=True):
         f = st.date_input("Fecha Gasto", value=datetime(anio_sel, mes_sel_num, 1))
@@ -91,9 +91,8 @@ with tabs[1]:
         u = st.radio("Pagado por", ["Agustín", "Laura"], horizontal=True)
         d = st.text_input("Nota")
         if st.form_submit_button("Guardar"):
-            n = pd.DataFrame([{"Fecha": f.strftime("%Y-%m-%d"), "Categoria": cat, "Monto": m, "Descripcion": d, "Usuario": u, "Retirado": "No"}])
-            df_subir = pd.concat([df_gastos_raw, n], ignore_index=True)
-            # Asegurar formato fecha string para evitar horas en Sheets
+            nuevo_registro = pd.DataFrame([{"Fecha": f.strftime("%Y-%m-%d"), "Categoria": cat, "Monto": m, "Descripcion": d, "Usuario": u, "Retirado": "No"}])
+            df_subir = pd.concat([df_gastos_raw, nuevo_registro], ignore_index=True)
             df_subir['Fecha'] = pd.to_datetime(df_subir['Fecha']).dt.strftime('%Y-%m-%d')
             conn.update(worksheet="Gastos", data=df_subir)
             st.cache_data.clear()
@@ -113,7 +112,7 @@ with tabs[2]:
         if user_f != "Ambos" and st.button(f"Retirar TODO de {user_f}"):
             df_gastos_raw.loc[df_pend[df_pend['Usuario'] == user_f].index, 'Retirado'] = 'Sí'
             df_subir = df_gastos_raw.copy()
-            df_subir['Fecha'] = df_subir['Fecha'].dt.strftime('%Y-%m-%d')
+            df_subir['Fecha'] = pd.to_datetime(df_subir['Fecha']).dt.strftime('%Y-%m-%d')
             conn.update(worksheet="Gastos", data=df_subir)
             st.cache_data.clear()
             st.rerun()
@@ -129,7 +128,7 @@ with tabs[2]:
                 df_gastos_raw.at[idx_orig, "Monto"] = row["Monto"]
                 if row["Check"]: df_gastos_raw.at[idx_orig, "Retirado"] = "Sí"
             df_subir = df_gastos_raw.copy()
-            df_subir['Fecha'] = df_subir['Fecha'].dt.strftime('%Y-%m-%d')
+            df_subir['Fecha'] = pd.to_datetime(df_subir['Fecha']).dt.strftime('%Y-%m-%d')
             conn.update(worksheet="Gastos", data=df_subir)
             st.cache_data.clear()
             st.rerun()
@@ -159,6 +158,8 @@ with tabs[4]:
     df_ed_view['Fecha'] = df_ed_view['Fecha'].dt.strftime("%Y-%m-%d")
     df_ed = st.data_editor(df_ed_view, num_rows="dynamic", use_container_width=True)
     if st.button("Guardar Cambios Maestros"):
+        # Asegurar formato antes de guardar desde edición manual
+        df_ed['Fecha'] = pd.to_datetime(df_ed['Fecha']).dt.strftime('%Y-%m-%d')
         conn.update(worksheet="Gastos", data=df_ed)
         st.cache_data.clear()
         st.rerun()
