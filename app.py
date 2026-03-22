@@ -6,20 +6,23 @@ from datetime import datetime
 st.set_page_config(page_title="Gastos Familia", layout="wide")
 conn = st.connection("gsheets", type=GSheetsConnection)
 
+# 1. Función para formatear a miles con punto (Devuelve Texto)
+def formatear_punto(valor):
+    return f"$ {int(valor):,}".replace(",", ".")
+
 # Carga de datos
 df_presupuesto = conn.read(worksheet="Presupuesto", ttl="5m")
 df_gastos_raw = conn.read(worksheet="Gastos", ttl="0")
-
-# Preparación de datos
 df_gastos = df_gastos_raw.copy()
+
 if 'Retirado' not in df_gastos.columns:
     df_gastos['Retirado'] = 'No'
 
-st.title("🏠 Gestión de Gastos y Cuenta Bipersonal")
+st.title("🏠 Gestión de Gastos")
 
 tab1, tab2, tab3, tab4 = st.tabs(["➕ Registrar", "🏦 Conciliar", "📊 Resumen", "⚙️ Editar/Borrar"])
 
-# --- TAB 1: REGISTRO ---
+# --- TAB 1: REGISTRO (Sigue igual, procesa números) ---
 with tab1:
     with st.form("formulario_gasto", clear_on_submit=True):
         col1, col2 = st.columns(2)
@@ -28,100 +31,58 @@ with tab1:
             categoria = st.selectbox("Categoría", df_presupuesto["Categoria"].unique())
         with col2:
             monto = st.number_input("Monto ($)", min_value=0, step=1000)
-            usuario = st.radio("Pagado por", ["Agustín", "Laura"], horizontal=True) # NOMBRES ACTUALIZADOS
-        
+            usuario = st.radio("Pagado por", ["Agustín", "Laura"], horizontal=True)
         descripcion = st.text_input("Nota (opcional)")
         
         if st.form_submit_button("Guardar Gasto"):
-            nuevo = pd.DataFrame([{
-                "Fecha": fecha.strftime("%Y-%m-%d"),
-                "Categoria": categoria,
-                "Monto": monto,
-                "Descripcion": descripcion,
-                "Usuario": usuario,
-                "Retirado": "No"
-            }])
-            df_actualizado = pd.concat([df_gastos_raw, nuevo], ignore_index=True)
-            conn.update(worksheet="Gastos", data=df_actualizado)
+            nuevo = pd.DataFrame([{"Fecha": fecha.strftime("%Y-%m-%d"), "Categoria": categoria, "Monto": monto, "Descripcion": descripcion, "Usuario": usuario, "Retirado": "No"}])
+            conn.update(worksheet="Gastos", data=pd.concat([df_gastos_raw, nuevo], ignore_index=True))
             st.success("✅ Registrado")
             st.rerun()
 
-# --- TAB 2: CONCILIACIÓN ---
+# --- TAB 2: CONCILIACIÓN (Vista formateada) ---
 with tab2:
-    st.subheader("Pendientes de retiro")
     df_pendientes = df_gastos[df_gastos['Retirado'] == 'No'].copy()
-    
     if not df_pendientes.empty:
-        df_pendientes['Check_Retiro'] = False
+        # TRUCO: Formateamos el monto como texto para la vista
+        df_ver = df_pendientes.copy()
+        df_ver["Monto"] = df_ver["Monto"].apply(formatear_punto)
+        df_ver["Check"] = False
         
-        # Formateamos para visualización con punto
-        st.data_editor(
-            df_pendientes[["Fecha", "Categoria", "Monto", "Usuario", "Descripcion", "Check_Retiro"]],
-            column_config={
-                "Monto": st.column_config.NumberColumn("Monto", format="$ %d"), 
-                "Check_Retiro": st.column_config.CheckboxColumn("¿Retirar?", default=False)
-            },
-            disabled=["Fecha", "Categoria", "Monto", "Usuario", "Descripcion"],
-            key="editor_conciliar",
-            use_container_width=True, hide_index=True
-        )
+        edited = st.data_editor(df_ver[["Fecha", "Categoria", "Monto", "Usuario", "Check"]], 
+                                disabled=["Fecha", "Categoria", "Monto", "Usuario"], 
+                                use_container_width=True, hide_index=True)
         
-        if st.button("Confirmar Retiros Seleccionados"):
-            # Lógica de actualización (usa los índices del editor)
-            # Para simplificar la edición con punto, el botón procesa el estado actual
-            indices_si = st.session_state["editor_conciliar"]["edited_rows"]
-            for idx, val in indices_si.items():
-                if val.get("Check_Retiro"):
-                    # Mapear el índice de la vista filtrada al dataframe original
-                    real_idx = df_pendientes.index[idx]
-                    df_gastos.loc[real_idx, 'Retirado'] = 'Sí'
-            
+        if st.button("Confirmar Retiros"):
+            indices_seleccionados = edited[edited["Check"] == True].index
+            real_indices = df_pendientes.index[indices_seleccionados]
+            df_gastos.loc[real_indices, 'Retirado'] = 'Sí'
             conn.update(worksheet="Gastos", data=df_gastos)
-            st.success("✅ Movimientos conciliados")
             st.rerun()
     else:
         st.info("No hay retiros pendientes.")
 
-# --- TAB 3: RESUMEN ---
+# --- TAB 3: RESUMEN (Métrica y Tabla con puntos forzados) ---
 with tab3:
     por_retirar = df_gastos[df_gastos['Retirado'] == 'No']['Monto'].sum()
-    # Forzado manual de punto para la métrica
-    valor_formateado = f"$ {int(por_retirar):,}".replace(",", ".")
-    st.metric("Total por retirar de la Bipersonal", valor_formateado)
+    st.metric("Total por retirar de la Bipersonal", formatear_punto(por_retirar))
     
     st.divider()
-    
     gastos_totales = df_gastos.groupby("Categoria")["Monto"].sum().reset_index()
     resumen = pd.merge(df_presupuesto, gastos_totales, on="Categoria", how="left").fillna(0)
     resumen["Disponible"] = resumen["Monto_Mensual"] - resumen["Monto"]
     
-    # Configuración de tabla con separador visual
-    st.dataframe(
-        resumen, 
-        column_config={
-            "Monto_Mensual": st.column_config.NumberColumn("Presupuesto", format="$ %d"),
-            "Monto": st.column_config.NumberColumn("Gastado", format="$ %d"),
-            "Disponible": st.column_config.NumberColumn("Disponible", format="$ %d")
-        },
-        use_container_width=True, hide_index=True
-    )
+    # Aplicamos formato de texto a toda la tabla para asegurar los puntos
+    resumen_ver = resumen.copy()
+    for col in ["Monto_Mensual", "Monto", "Disponible"]:
+        resumen_ver[col] = resumen_ver[col].apply(formatear_punto)
+    
+    st.table(resumen_ver) # Usamos st.table que es más estricta con el formato de texto
 
-# --- TAB 4: EDICIÓN Y BORRADO ---
+# --- TAB 4: EDICIÓN (Aquí se mantienen números para poder editar) ---
 with tab4:
-    st.subheader("Consola de Edición")
-    
-    df_editado = st.data_editor(
-        df_gastos,
-        num_rows="dynamic",
-        use_container_width=True,
-        hide_index=False,
-        column_config={
-            "Monto": st.column_config.NumberColumn("Monto", format="$ %d"), 
-            "Usuario": st.column_config.SelectboxColumn("Usuario", options=["Agustín", "Laura"]),
-            "Retirado": st.column_config.SelectboxColumn("Estado Retiro", options=["Sí", "No"])
-        }
-    )
-    
+    st.caption("En edición se ven sin puntos para permitir el ingreso numérico.")
+    df_editado = st.data_editor(df_gastos, num_rows="dynamic", use_container_width=True)
     if st.button("Guardar Cambios Maestros"):
         conn.update(worksheet="Gastos", data=df_editado)
         st.success("✅ Base de datos actualizada")
