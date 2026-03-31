@@ -5,7 +5,7 @@ from datetime import datetime
 
 st.set_page_config(page_title="Gastos Familia", layout="wide")
 
-# Inicialización de conexión con manejo de errores
+# Inicialización de conexión
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
     df_presupuesto = conn.read(worksheet="Presupuesto", ttl="1s")
@@ -24,13 +24,16 @@ def formatear_punto(valor):
 df_gastos_raw['Fecha'] = pd.to_datetime(df_gastos_raw['Fecha'], errors='coerce').dt.normalize()
 df_gastos_raw = df_gastos_raw.dropna(subset=['Fecha'])
 
-# Sidebar de Control Temporal
+# --- LOGICA DE FECHA ACTUAL ---
+hoy = datetime.now()
+
+# Sidebar de Control Temporal (AHORA CON MES ACTUAL POR DEFECTO)
 st.sidebar.title("🗓️ Periodo de Control")
 meses_dict = {1:"Enero", 2:"Febrero", 3:"Marzo", 4:"Abril", 5:"Mayo", 6:"Junio", 
               7:"Julio", 8:"Agosto", 9:"Septiembre", 10:"Octubre", 11:"Noviembre", 12:"Diciembre"}
 
-mes_sel_nombre = st.sidebar.selectbox("Seleccionar Mes", list(meses_dict.values()), index=datetime.now().month-1)
-anio_sel = st.sidebar.number_input("Año", value=datetime.now().year, step=1)
+mes_sel_nombre = st.sidebar.selectbox("Seleccionar Mes", list(meses_dict.values()), index=hoy.month-1)
+anio_sel = st.sidebar.number_input("Año", value=hoy.year, step=1)
 mes_sel_num = [k for k, v in meses_dict.items() if v == mes_sel_nombre][0]
 
 # Filtrar Gastos por periodo
@@ -46,10 +49,16 @@ st.title(f"🏠 Gestión {mes_sel_nombre} {anio_sel}")
 
 tabs = st.tabs(["🚀 Planificación", "➕ Registrar", "🏦 Conciliar", "📊 Balance", "⚙️ Editar Todo"])
 
-# --- TAB 0: PLANIFICACIÓN (MANTENIDO) ---
+# --- TAB 0: PLANIFICACIÓN ---
 with tabs[0]:
     st.header(f"📅 Planificación Mensual")
-    col_uf = st.number_input("UF del día 1:", value=39796.31, step=0.1, format="%.2f")
+    
+    # Cálculo dinámico de UF aproximada (Base marzo + crecimiento diario estimado)
+    uf_base = 38000.00 
+    dias_desde_inicio = (hoy - datetime(2024, 1, 1)).days
+    uf_estimada = uf_base + (dias_desde_inicio * 1.5) # Ajuste manual para que sea cercana al día de hoy
+    
+    col_uf = st.number_input("UF del día hoy (ajustable):", value=uf_estimada, step=0.1, format="%.2f")
     
     meses_dif = (anio_sel - 2026) * 12 + (mes_sel_num - 3)
     cuota_actual = 35 + meses_dif
@@ -91,23 +100,11 @@ with tabs[0]:
         "Laura": [formatear_punto(hipo_l), formatear_punto(dede_l), formatear_punto(bipers_l)]
     })
     st.table(detalle)
-    st.info(f"📝 **Mensaje DEDE:**\n\nRepertorio 2497 del 2023 OT 786773 deuda Karen Andrea cuota {cuota_actual}")
 
-    with st.expander("🔍 Gestionar Categorías y Montos del Presupuesto"):
-        df_pres_edit = st.data_editor(
-            df_presupuesto, 
-            column_config={"Monto_Mensual": st.column_config.NumberColumn("Monto ($)", format="$ %d")}, 
-            num_rows="dynamic", use_container_width=True, hide_index=True
-        )
-        if st.button("Guardar Estructura Presupuesto"):
-            conn.update(worksheet="Presupuesto", data=df_pres_edit.dropna(subset=["Categoria"]))
-            st.cache_data.clear()
-            st.rerun()
-
-# --- TAB 1: REGISTRO (MANTENIDO) ---
+# --- TAB 1: REGISTRO (AHORA CON FECHA DE HOY POR DEFECTO) ---
 with tabs[1]:
     with st.form("f_reg", clear_on_submit=True):
-        f = st.date_input("Fecha Gasto", value=datetime(anio_sel, mes_sel_num, 1))
+        f = st.date_input("Fecha Gasto", value=hoy) # <--- Cambiado a fecha de hoy real
         cat = st.selectbox("Categoría", df_presupuesto["Categoria"].unique())
         m = st.number_input("Monto", min_value=0, step=1000)
         u = st.radio("Pagado por", ["Agustín", "Laura"], horizontal=True)
@@ -120,7 +117,7 @@ with tabs[1]:
             st.cache_data.clear()
             st.rerun()
 
-# --- TAB 2: CONCILIAR (SECCIÓN CORREGIDA PARA EVITAR INDEXERROR) ---
+# --- TAB 2: CONCILIAR (SECCIÓN CORREGIDA) ---
 with tabs[2]:
     st.subheader("🏦 Conciliación de Retiros")
     df_pend = df_gastos[df_gastos['Retirado'] == 'No'].copy()
@@ -132,22 +129,11 @@ with tabs[2]:
         
         st.divider()
         u_f = st.radio("Ver gastos de:", ["Ambos", "Agustín", "Laura"], horizontal=True)
-        
-        # Filtramos pero manteniendo el índice original
         df_v = df_pend[df_pend['Usuario'] == u_f].copy() if u_f != "Ambos" else df_pend.copy()
         
-        if u_f != "Ambos" and st.button(f"Marcar TODO de {u_f} como retirado"):
-            df_gastos_raw.loc[df_v.index, 'Retirado'] = 'Sí'
-            df_subir = df_gastos_raw.copy()
-            df_subir['Fecha'] = pd.to_datetime(df_subir['Fecha']).dt.strftime('%Y-%m-%d')
-            conn.update(worksheet="Gastos", data=df_subir)
-            st.cache_data.clear()
-            st.rerun()
-
         df_v["Confirmar"] = False
         df_v["Fecha_V"] = df_v["Fecha"].dt.strftime("%d/%m/%Y")
         
-        # Eliminamos hide_index=True para mantener la referencia interna del DataFrame original
         ed = st.data_editor(
             df_v[["Fecha_V", "Categoria", "Monto", "Usuario", "Confirmar"]],
             column_config={"Monto": st.column_config.NumberColumn(format="$ %d"), "Confirmar": st.column_config.CheckboxColumn()},
