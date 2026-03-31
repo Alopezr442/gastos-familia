@@ -46,16 +46,14 @@ st.title(f"🏠 Gestión {mes_sel_nombre} {anio_sel}")
 
 tabs = st.tabs(["🚀 Planificación", "➕ Registrar", "🏦 Conciliar", "📊 Balance", "⚙️ Editar Todo"])
 
-# --- TAB 0: PLANIFICACIÓN (RESTAURADA) ---
+# --- TAB 0: PLANIFICACIÓN (MANTENIDO) ---
 with tabs[0]:
     st.header(f"📅 Planificación Mensual")
     col_uf = st.number_input("UF del día 1:", value=39796.31, step=0.1, format="%.2f")
     
-    # Cuota DEDE dinámica (Base Marzo 2026 = 35)
     meses_dif = (anio_sel - 2026) * 12 + (mes_sel_num - 3)
     cuota_actual = 35 + meses_dif
     
-    # Cálculos
     hipo_t, dede_t = 20.77 * col_uf, 15.18 * col_uf
     bipers_t = df_presupuesto["Monto_Mensual"].sum()
     
@@ -93,11 +91,9 @@ with tabs[0]:
         "Laura": [formatear_punto(hipo_l), formatear_punto(dede_l), formatear_punto(bipers_l)]
     })
     st.table(detalle)
-    
     st.info(f"📝 **Mensaje DEDE:**\n\nRepertorio 2497 del 2023 OT 786773 deuda Karen Andrea cuota {cuota_actual}")
 
     with st.expander("🔍 Gestionar Categorías y Montos del Presupuesto"):
-        st.caption("Añade filas al final o selecciona y presiona 'Suprimir' para borrar.")
         df_pres_edit = st.data_editor(
             df_presupuesto, 
             column_config={"Monto_Mensual": st.column_config.NumberColumn("Monto ($)", format="$ %d")}, 
@@ -108,7 +104,7 @@ with tabs[0]:
             st.cache_data.clear()
             st.rerun()
 
-# --- TAB 1: REGISTRO ---
+# --- TAB 1: REGISTRO (MANTENIDO) ---
 with tabs[1]:
     with st.form("f_reg", clear_on_submit=True):
         f = st.date_input("Fecha Gasto", value=datetime(anio_sel, mes_sel_num, 1))
@@ -124,10 +120,11 @@ with tabs[1]:
             st.cache_data.clear()
             st.rerun()
 
-# --- TAB 2: CONCILIAR ---
+# --- TAB 2: CONCILIAR (SECCIÓN CORREGIDA PARA EVITAR INDEXERROR) ---
 with tabs[2]:
     st.subheader("🏦 Conciliación de Retiros")
     df_pend = df_gastos[df_gastos['Retirado'] == 'No'].copy()
+    
     if not df_pend.empty:
         ca, cl = st.columns(2)
         ca.metric("Por retirar Agustín", formatear_punto(df_pend[df_pend['Usuario'] == 'Agustín']['Monto'].sum()))
@@ -135,10 +132,12 @@ with tabs[2]:
         
         st.divider()
         u_f = st.radio("Ver gastos de:", ["Ambos", "Agustín", "Laura"], horizontal=True)
+        
+        # Filtramos pero manteniendo el índice original
         df_v = df_pend[df_pend['Usuario'] == u_f].copy() if u_f != "Ambos" else df_pend.copy()
         
         if u_f != "Ambos" and st.button(f"Marcar TODO de {u_f} como retirado"):
-            df_gastos_raw.loc[df_pend[df_pend['Usuario'] == u_f].index, 'Retirado'] = 'Sí'
+            df_gastos_raw.loc[df_v.index, 'Retirado'] = 'Sí'
             df_subir = df_gastos_raw.copy()
             df_subir['Fecha'] = pd.to_datetime(df_subir['Fecha']).dt.strftime('%Y-%m-%d')
             conn.update(worksheet="Gastos", data=df_subir)
@@ -147,24 +146,30 @@ with tabs[2]:
 
         df_v["Confirmar"] = False
         df_v["Fecha_V"] = df_v["Fecha"].dt.strftime("%d/%m/%Y")
+        
+        # Eliminamos hide_index=True para mantener la referencia interna del DataFrame original
         ed = st.data_editor(
             df_v[["Fecha_V", "Categoria", "Monto", "Usuario", "Confirmar"]],
             column_config={"Monto": st.column_config.NumberColumn(format="$ %d"), "Confirmar": st.column_config.CheckboxColumn()},
-            disabled=["Fecha_V", "Categoria", "Usuario"], use_container_width=True, hide_index=True
+            disabled=["Fecha_V", "Categoria", "Usuario"], use_container_width=True
         )
+        
         if st.button("Confirmar Selección"):
-            for i, row in ed.iterrows():
-                idx_orig = df_v.index[i]
-                df_gastos_raw.at[idx_orig, "Monto"] = row["Monto"]
-                if row["Confirmar"]: df_gastos_raw.at[idx_orig, "Retirado"] = "Sí"
+            for idx in ed.index:
+                row = ed.loc[idx]
+                df_gastos_raw.at[idx, "Monto"] = row["Monto"]
+                if row["Confirmar"]: 
+                    df_gastos_raw.at[idx, "Retirado"] = "Sí"
+            
             df_subir = df_gastos_raw.copy()
             df_subir['Fecha'] = pd.to_datetime(df_subir['Fecha']).dt.strftime('%Y-%m-%d')
             conn.update(worksheet="Gastos", data=df_subir)
             st.cache_data.clear()
             st.rerun()
-    else: st.info("Sin retiros pendientes.")
+    else: 
+        st.info("Sin retiros pendientes.")
 
-# --- TAB 3: BALANCE ---
+# --- TAB 3: BALANCE (MANTENIDO) ---
 with tabs[3]:
     m_si = df_gastos[df_gastos['Retirado'] == 'Sí']['Monto'].sum()
     m_no = df_gastos[df_gastos['Retirado'] == 'No']['Monto'].sum()
@@ -181,7 +186,7 @@ with tabs[3]:
     for c in ["Monto_Mensual", "Monto", "Disponible"]: res[c] = res[c].apply(formatear_punto)
     st.table(res)
 
-# --- TAB 4: EDITAR TODO ---
+# --- TAB 4: EDITAR TODO (MANTENIDO) ---
 with tabs[4]:
     df_ed_v = df_gastos_raw.copy()
     df_ed_v['Fecha'] = df_ed_v['Fecha'].dt.strftime("%Y-%m-%d")
