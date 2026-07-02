@@ -1,3 +1,8 @@
+Entendido. Eliminamos la lectura de la hoja "Sueldos" y la persistencia histórica. Ahora los sueldos se manejan directamente como campos editables de entrada numérica (`st.number_input`) en la pestaña de Planificación, calculando la proporcionalidad en tiempo real sobre la marcha para el desglose.
+
+Aquí tienes el código completo y simplificado:
+
+```python
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
@@ -20,14 +25,14 @@ def formatear_punto(valor):
     except:
         return "$ 0"
 
-# Normalización de fechas
+# Normalización de fechas de gastos
 df_gastos_raw['Fecha'] = pd.to_datetime(df_gastos_raw['Fecha'], errors='coerce').dt.normalize()
 df_gastos_raw = df_gastos_raw.dropna(subset=['Fecha'])
 
 # --- LÓGICA DE TIEMPO REAL ---
 hoy = datetime.now()
 
-# Sidebar de Control Temporal (Mes actual por defecto)
+# Sidebar de Control Temporal
 st.sidebar.title("🗓️ Periodo de Control")
 meses_dict = {1:"Enero", 2:"Febrero", 3:"Marzo", 4:"Abril", 5:"Mayo", 6:"Junio", 
               7:"Julio", 8:"Agosto", 9:"Septiembre", 10:"Octubre", 11:"Noviembre", 12:"Diciembre"}
@@ -49,23 +54,40 @@ st.title(f"🏠 Gestión {mes_sel_nombre} {anio_sel}")
 
 tabs = st.tabs(["🚀 Planificación", "➕ Registrar", "🏦 Conciliar", "📊 Balance", "⚙️ Editar Todo"])
 
-# --- TAB 0: PLANIFICACIÓN (RESTAURADA TOTALMENTE) ---
+# --- TAB 0: PLANIFICACIÓN ---
 with tabs[0]:
     st.header(f"📅 Planificación Mensual")
-    # UF del día con valor sugerido dinámico aproximado
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("💰 Ingresos Base para Proporcionalidad")
+        s_agustin = st.number_input("Sueldo Agustín ($)", value=5200000, step=50000)
+        s_laura = st.number_input("Sueldo Laura ($)", value=2900000, step=50000)
+        
+        # Recálculo instantáneo en memoria
+        total_sueldos = s_agustin + s_laura
+        p_agustin = s_agustin / total_sueldos if total_sueldos > 0 else 0.5
+        p_laura = s_laura / total_sueldos if total_sueldos > 0 else 0.5
+
+    with col2:
+        st.subheader("📊 Porcentaje de Participación")
+        st.metric("Participación Agustín", f"{p_agustin*100:.2f} %")
+        st.metric("Participación Laura", f"{p_laura*100:.2f} %")
+
+    st.divider()
     col_uf = st.number_input("UF del día:", value=39796.31, step=0.1, format="%.2f")
     
     # Cuota DEDE dinámica (Base Marzo 2026 = 35)
     meses_dif = (anio_sel - 2026) * 12 + (mes_sel_num - 3)
     cuota_actual = 35 + meses_dif
     
-    # Cálculos de Aportes
+    # Cálculos de Aportes usando los multiplicadores dinámicos de los inputs superiores
     hipo_t, dede_t = 20.77 * col_uf, 15.18 * col_uf
     bipers_t = df_presupuesto["Monto_Mensual"].sum()
     
-    hipo_a, hipo_l = hipo_t * 0.748, hipo_t * 0.252
-    dede_a, dede_l = dede_t * 0.5, dede_t * 0.5
-    bipers_a, bipers_l = bipers_t * 0.858, bipers_t * 0.142
+    hipo_a, hipo_l = hipo_t * p_agustin, hipo_t * p_laura
+    dede_a, dede_l = dede_t * 0.5, dede_t * 0.5  # Se mantiene fijo 50/50 según acuerdo
+    bipers_a, bipers_l = bipers_t * p_agustin, bipers_t * p_laura
     
     total_a, total_l = hipo_a + dede_a + bipers_a, hipo_l + dede_l + bipers_l
     total_deposito = total_a + total_l
@@ -112,7 +134,7 @@ with tabs[0]:
             st.cache_data.clear()
             st.rerun()
 
-# --- TAB 1: REGISTRO (CON FECHA ACTUAL) ---
+# --- TAB 1: REGISTRO ---
 with tabs[1]:
     with st.form("f_reg", clear_on_submit=True):
         f = st.date_input("Fecha Gasto", value=hoy)
@@ -128,7 +150,7 @@ with tabs[1]:
             st.cache_data.clear()
             st.rerun()
 
-# --- TAB 2: CONCILIAR (LÓGICA SEGURA CONTRA INDEXERROR) ---
+# --- TAB 2: CONCILIAR ---
 with tabs[2]:
     st.subheader("🏦 Conciliación de Retiros")
     df_pend = df_gastos[df_gastos['Retirado'] == 'No'].copy()
@@ -175,6 +197,15 @@ with tabs[2]:
 
 # --- TAB 3: BALANCE ---
 with tabs[3]:
+    st.subheader("📊 Resumen de Proporcionalidad Aplicada")
+    df_resumen_sueldos = pd.DataFrame({
+        "Usuario": ["Agustín", "Laura"],
+        "Sueldo Declarado": [formatear_punto(s_agustin), formatear_punto(s_laura)],
+        "% de Participación": [f"{p_agustin*100:.2f} %", f"{p_laura*100:.2f} %"]
+    })
+    st.table(df_resumen_sueldos)
+    st.divider()
+
     m_si = df_gastos[df_gastos['Retirado'] == 'Sí']['Monto'].sum()
     m_no = df_gastos[df_gastos['Retirado'] == 'No']['Monto'].sum()
     s_ba = total_deposito - m_si
@@ -200,3 +231,5 @@ with tabs[4]:
         conn.update(worksheet="Gastos", data=df_ed)
         st.cache_data.clear()
         st.rerun()
+
+```
