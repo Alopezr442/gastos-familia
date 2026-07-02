@@ -70,35 +70,46 @@ with tabs[0]:
         st.metric("Participación Laura", f"{p_laura*100:.2f} %")
 
     st.divider()
-    col_uf = st.number_input("UF del día:", value=39796.31, step=0.1, format="%.2f")
+    
+    # Parámetros variables del mes (UF y montos de deudas en UF)
+    st.subheader("⚙️ Parámetros y Deudas del Mes")
+    c_uf, c_uf_hipo, c_uf_dede = st.columns(3)
+    with c_uf:
+        col_uf = st.number_input("Valor UF del día:", value=39796.31, step=0.1, format="%.2f")
+    with c_uf_hipo:
+        uf_hipotecario = st.number_input("Monto Hipotecario (UF):", value=20.77, step=0.01, format="%.2f")
+    with c_uf_dede:
+        uf_dede = st.number_input("Monto DEDE (UF):", value=15.18, step=0.01, format="%.2f")
     
     # Cuota DEDE dinámica (Base Marzo 2026 = 35)
     meses_dif = (anio_sel - 2026) * 12 + (mes_sel_num - 3)
     cuota_actual = 35 + meses_dif
     
-    # Cálculos de Aportes usando los multiplicadores dinámicos de los inputs superiores
-    hipo_t, dede_t = 20.77 * col_uf, 15.18 * col_uf
+    # Cálculos de Aportes dinámicos
+    hipo_t = uf_hipotecario * col_uf
+    dede_t = uf_dede * col_uf
     bipers_t = df_presupuesto["Monto_Mensual"].sum()
     
     hipo_a, hipo_l = hipo_t * p_agustin, hipo_t * p_laura
-    dede_a, dede_l = dede_t * 0.5, dede_t * 0.5  # Se mantiene fijo 50/50 según acuerdo
+    dede_a, dede_l = dede_t * 0.5, dede_t * 0.5  # Mantiene acuerdo 50/50
     bipers_a, bipers_l = bipers_t * p_agustin, bipers_t * p_laura
     
     total_a, total_l = hipo_a + dede_a + bipers_a, hipo_l + dede_l + bipers_l
     total_deposito = total_a + total_l
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Aporte Agustín", formatear_punto(total_a))
-    c2.metric("Aporte Laura", formatear_punto(total_l))
-    c3.metric("Total Mes", formatear_punto(total_deposito))
+    st.divider()
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Aporte Agustín", formatear_punto(total_a))
+    m2.metric("Aporte Laura", formatear_punto(total_l))
+    m3.metric("Total Mes", formatear_punto(total_deposito))
     
     st.divider()
     
     if st.button("🚀 Iniciar este Mes (Cargar Créditos Agustín)"):
         fecha_ini = datetime(anio_sel, mes_sel_num, 1).strftime("%Y-%m-%d")
         deudas = pd.DataFrame([
-            {"Fecha": fecha_ini, "Categoria": "Hipotecario", "Monto": hipo_t, "Descripcion": "Dividendo", "Usuario": "Agustín", "Retirado": "No"},
-            {"Fecha": fecha_ini, "Categoria": "DEDE", "Monto": dede_t, "Descripcion": f"Cuota {cuota_actual}", "Usuario": "Agustín", "Retirado": "No"}
+            {"Fecha": fecha_ini, "Categoria": "Hipotecario", "Monto": hipo_t, "Descripcion": f"Dividendo ({uf_hipotecario} UF)", "Usuario": "Agustín", "Retirado": "No"},
+            {"Fecha": fecha_ini, "Categoria": "DEDE", "Monto": dede_t, "Descripcion": f"Cuota {cuota_actual} ({uf_dede} UF)", "Usuario": "Agustín", "Retirado": "No"}
         ])
         df_subir = pd.concat([df_gastos_raw, deudas], ignore_index=True)
         df_subir['Fecha'] = pd.to_datetime(df_subir['Fecha']).dt.strftime('%Y-%m-%d')
@@ -108,7 +119,7 @@ with tabs[0]:
 
     st.subheader("📊 Detalle de Transferencia")
     detalle = pd.DataFrame({
-        "Ítem": ["Hipotecario (20.77 UF)", "DEDE (15.18 UF)", "Presupuesto Casa"],
+        "Ítem": [f"Hipotecario ({uf_hipotecario} UF)", f"DEDE ({uf_dede} UF)", "Presupuesto Casa"],
         "Total": [formatear_punto(hipo_t), formatear_punto(dede_t), formatear_punto(bipers_t)],
         "Agustín": [formatear_punto(hipo_a), formatear_punto(dede_a), formatear_punto(bipers_a)],
         "Laura": [formatear_punto(hipo_l), formatear_punto(dede_l), formatear_punto(bipers_l)]
