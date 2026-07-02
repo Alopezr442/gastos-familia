@@ -1,8 +1,3 @@
-Entendido. Eliminamos la lectura de la hoja "Sueldos" y la persistencia histórica. Ahora los sueldos se manejan directamente como campos editables de entrada numérica (`st.number_input`) en la pestaña de Planificación, calculando la proporcionalidad en tiempo real sobre la marcha para el desglose.
-
-Aquí tienes el código completo y simplificado:
-
-```python
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
@@ -231,5 +226,3 @@ with tabs[4]:
         conn.update(worksheet="Gastos", data=df_ed)
         st.cache_data.clear()
         st.rerun()
-
-```
