@@ -146,7 +146,7 @@ with tabs[1]:
         f = st.date_input("Fecha Gasto", value=hoy)
         cat = st.selectbox("Categoría", df_presupuesto["Categoria"].unique())
         m = st.number_input("Monto", min_value=0, step=1000)
-        u = st.radio("Pagado por", ["Agustín", "Laura"], horizontal=True)
+        u = st.radio("Pagado por", ["Agustín", "Laura","Amex","Transferencia Bi"], horizontal=True)
         d = st.text_input("Nota")
         if st.form_submit_button("Guardar"):
             nuevo = pd.DataFrame([{"Fecha": f.strftime("%Y-%m-%d"), "Categoria": cat, "Monto": m, "Descripcion": d, "Usuario": u, "Retirado": "No"}])
